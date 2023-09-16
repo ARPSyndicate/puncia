@@ -1,0 +1,4 @@
+pypi.sh
+build
+dist
+*.egg-info
