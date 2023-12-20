@@ -1,5 +1,6 @@
 #  The Panthera(P.)uncia of Cybersecurity 
 ### Subdomain & Exploit Hunter powered by AI
+
 [![Downloads](https://pepy.tech/badge/puncia)](https://pepy.tech/project/puncia)
 <img src="https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat">
 <img alt="GitHub stars" src="https://img.shields.io/github/stars/ARPSyndicate/puncia"> 
@@ -21,3 +22,9 @@ Puncia utilizes two of our intelligent APIs - [Subdomain Center](https://subdoma
 ## Noteworthy Mentions
 - [PUNCIA — The Panthera(P.)uncia of Cybersecurity](https://g147.medium.com/puncia-the-panthera-p-uncia-of-cybersecurity-ft-puncia-subdomain-center-exploit-observer-9a9d8cca9576)
 - [Subdomain Enumeration Tool Face-off - 2023 Edition](https://blog.blacklanternsecurity.com/p/subdomain-enumeration-tool-face-off-4e5)
+
+## More from [ARPSyndicate](https://www.arpsyndicate.io)
+- [Attack Surface Management](https://asm.arpsyndicate.io)
+- [OSINT Resources](https://asm.arpsyndicate.io/intelligence.html)
+- [Subdomain Center](https://subdomain.center)
+- [Exploit Observer](https://exploit.observer)
