@@ -7,7 +7,7 @@ import time
 def main():
     try:
         print(
-            "Panthera(P.)uncia [v0.13]\nSubdomain & Exploit Hunter powered by AI\n[https://www.arpsyndicate.io]\n---------"
+            "Panthera(P.)uncia [v0.14]\nSubdomain & Exploit Hunter powered by AI\n[https://www.arpsyndicate.io]\n---------"
         )
         if len(sys.argv) < 2:
             sys.exit("additional command required (subdomain/exploit)")
@@ -20,7 +20,10 @@ def main():
             response = requests.get(
                 "http://api.subdomain.center/?domain=" + sys.argv[2]
             ).json()
-            result = "\n".join(response)
+            if len(response) > 0:
+                result = json.dumps(response, indent=4, sort_keys=True)
+            else:
+                sys.exit("Null Response")
             print(result)
             if len(sys.argv) == 4:
                 with open(sys.argv[3], "w") as f:
@@ -30,7 +33,7 @@ def main():
                 "http://api.exploit.observer/?keyword=" + sys.argv[2]
             ).json()
             if "entries" in response:
-                result = "\n".join(response["entries"])
+                result = json.dumps(response, indent=4, sort_keys=True)
             else:
                 sys.exit("Null Response")
             print(result)
