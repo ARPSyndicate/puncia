@@ -20,7 +20,8 @@ Puncia utilizes two of our intelligent APIs - [Subdomain Center](https://subdoma
 
 
 ## Noteworthy Mentions
-- [PUNCIA — The Panthera(P.)uncia of Cybersecurity](https://g147.medium.com/puncia-the-panthera-p-uncia-of-cybersecurity-ft-puncia-subdomain-center-exploit-observer-9a9d8cca9576)
+- [Introducing Exploit Observer — More than Shodan Exploits, Less than Vulners](https://blog.arpsyndicate.io/introducing-exploit-observer-more-than-shodan-exploits-less-than-vulners-23eaea466e4a)
+- [PUNCIA — The Panthera(P.)uncia of Cybersecurity](https://blog.arpsyndicate.io/puncia-the-panthera-p-uncia-of-cybersecurity-ft-puncia-subdomain-center-exploit-observer-9a9d8cca9576)
 - [Subdomain Enumeration Tool Face-off - 2023 Edition](https://blog.blacklanternsecurity.com/p/subdomain-enumeration-tool-face-off-4e5)
 
 ## More from [A.R.P. Syndicate](https://www.arpsyndicate.io)
