@@ -16,7 +16,19 @@ Puncia utilizes two of our intelligent APIs - [Subdomain Center](https://subdoma
 
 ## Usage
 1. Subdomain - `puncia subdomain <domain> <output>`
-2. Exploit - `puncia exploit <keyword> <output>`<br>
+2. Exploit - `puncia exploit <eoidentifier> <output>`<br>
+
+## Supported EOIdentifiers
+1. Common Vulnerabilities and Exposures (CVE) - [`puncia exploit CVE-2021-3450`](https://api.exploit.observer/?keyword=CVE-2021-3450) 
+2. GitHub Security Advisories (GHSA) - [`puncia exploit GHSA-wfh5-x68w-hvw2`](https://api.exploit.observer/?keyword=GHSA-wfh5-x68w-hvw2) 
+3. Exploit Database (EDB) - [`puncia exploit EDB-10102`](https://api.exploit.observer/?keyword=EDB-10102)
+4. Zero Day Initiative (ZDI) - [`puncia exploit ZDI-23-1714`](https://api.exploit.observer/?keyword=ZDI-23-1714) 
+5. Packet Storm Security (PSS) - [`puncia exploit PSS-170615`](https://api.exploit.observer/?keyword=PSS-170615) 
+6. World Laboratory of Bugtraq (WLB) - [`puncia exploit WLB-2024010058`](https://api.exploit.observer/?keyword=WLB-2024010058)
+7. Metasploit Framework (MSF) - [`puncia exploit MSF/auxiliary_admin/2wire/xslt_password_reset`](https://api.exploit.observer/?keyword=MSF/auxiliary_admin/2wire/xslt_password_reset)
+8. ProjectDiscovery Nuclei (PD) - [`puncia exploit PD/http/vulnerabilities/vbulletin/vbulletin-ajaxreg-sqli`](https://api.exploit.observer/?keyword=PD/http/vulnerabilities/vbulletin/vbulletin-ajaxreg-sqli) 
+9. YouTube (YT) - [`puncia exploit YT/ccqjhUmwLCk`](https://api.exploit.observer/?keyword=YT/ccqjhUmwLCk)
+10. Technologies (No Prefix) - [`puncia exploit grafana`](https://api.exploit.observer/?keyword=grafana)<br>
 
 
 ## Noteworthy Mentions
