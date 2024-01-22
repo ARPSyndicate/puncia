@@ -27,8 +27,10 @@ Puncia utilizes two of our intelligent APIs - [Subdomain Center](https://subdoma
 6. World Laboratory of Bugtraq (WLB) - [`puncia exploit WLB-2024010058`](https://api.exploit.observer/?keyword=WLB-2024010058)
 7. Metasploit Framework (MSF) - [`puncia exploit MSF/auxiliary_admin/2wire/xslt_password_reset`](https://api.exploit.observer/?keyword=MSF/auxiliary_admin/2wire/xslt_password_reset)
 8. ProjectDiscovery Nuclei (PD) - [`puncia exploit PD/http/vulnerabilities/vbulletin/vbulletin-ajaxreg-sqli`](https://api.exploit.observer/?keyword=PD/http/vulnerabilities/vbulletin/vbulletin-ajaxreg-sqli) 
-9. YouTube (YT) - [`puncia exploit YT/ccqjhUmwLCk`](https://api.exploit.observer/?keyword=YT/ccqjhUmwLCk)
-10. Technologies (No Prefix) - [`puncia exploit grafana`](https://api.exploit.observer/?keyword=grafana)<br>
+9. Hackerone Hacktivity (H1) - [`puncia exploit H1-2230915`](https://api.exploit.observer/?keyword=H1-2230915)
+10. Cisco Talos (TALOS) - [`puncia exploit TALOS-2023-1896`](https://api.exploit.observer/?keyword=TALOS-2023-1896)
+11. YouTube (YT) - [`puncia exploit YT/ccqjhUmwLCk`](https://api.exploit.observer/?keyword=YT/ccqjhUmwLCk)
+12. Technologies/Keywords (No Prefix) - [`puncia exploit grafana`](https://api.exploit.observer/?keyword=grafana)<br>
 
 
 ## Noteworthy Mentions
