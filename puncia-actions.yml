@@ -1,0 +1,37 @@
+name: puncia-actions
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  puncia:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+
+    - name: Install Puncia
+      run: |
+        pip3 install puncia
+    
+    - name: Run Puncia
+      run: |
+        puncia bulk ${{ github.workspace }}/inputs.json ${{ github.workspace }}/
+    
+    - name: Commit and push changes
+      run: |
+        git config --local user.email "puncia@github.local"
+        git config --local user.name "Puncia Actions"
+        git add .
+        git commit -m "$(date)"
+        git push
