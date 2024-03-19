@@ -30,7 +30,7 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
     ],
     "exploit": [
         "eoidentifierA",
-        "eoidentifierA"
+        "eoidentifierB"
     ]
 }
 ```
@@ -60,6 +60,7 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
 
 
 ## Noteworthy Mentions
+- [Utilizing GitHub Actions for gathering Subdomain & Exploit Intelligence](https://blog.arpsyndicate.io/utilizing-github-actions-for-gathering-subdomain-exploit-intelligence-bbc79c19bb85)
 - [Introducing Exploit Observer — More than Shodan Exploits, Less than Vulners](https://blog.arpsyndicate.io/introducing-exploit-observer-more-than-shodan-exploits-less-than-vulners-23eaea466e4a)
 - [PUNCIA — The Panthera(P.)uncia of Cybersecurity](https://blog.arpsyndicate.io/puncia-the-panthera-p-uncia-of-cybersecurity-ft-puncia-subdomain-center-exploit-observer-9a9d8cca9576)
 - [Subdomain Enumeration Tool Face-off - 2023 Edition](https://blog.blacklanternsecurity.com/p/subdomain-enumeration-tool-face-off-4e5)
