@@ -12,6 +12,7 @@ setup(
         "Subdomain Center": "https://subdomain.center",
         "Exploit Observer": "https://exploit.observer",
     },
+    license="MIT",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     description="The Panthera(P.)uncia of Cybersecurity - Official CLI utility for Subdomain Center & Exploit Observer",
