@@ -60,7 +60,10 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
 22. WP Engine WPScan (WPSCAN) - [`puncia exploit WPSCAN-52568abd-c509-411e-8391-c75e7613eb42`](https://api.exploit.observer/?keyword=WPSCAN-52568abd-c509-411e-8391-c75e7613eb42)
 23. Defiant Wordfence (WORDFENCE) - [`puncia exploit WORDFENCE-00086b84-c1ec-447a-a536-1c73eac1cc85`](https://api.exploit.observer/?keyword=WORDFENCE-00086b84-c1ec-447a-a536-1c73eac1cc85)
 24. YouTube (YT) - [`puncia exploit YT/ccqjhUmwLCk`](https://api.exploit.observer/?keyword=YT/ccqjhUmwLCk)
-25. Technologies/Keywords (No Prefix) - [`puncia exploit grafana`](https://api.exploit.observer/?keyword=grafana)<br>
+25. Zero Science Lab (ZSL) - [`puncia exploit ZSL-2022-5743`](https://api.exploit.observer/?keyword=ZSL-2022-5743)
+26. VARIoT Exploits (VAR-E) - [`puncia exploit VAR-E-201704-0525`](https://api.exploit.observer/?keyword=VAR-E-201704-0525)
+27. VARIoT Vulnerabilities (VAR) - [`puncia exploit VAR-202404-0085`](https://api.exploit.observer/?keyword=VAR-202404-0085)
+28. Technologies/Keywords (No Prefix) - [`puncia exploit grafana`](https://api.exploit.observer/?keyword=grafana)<br>
 
 
 ## Noteworthy Mentions
