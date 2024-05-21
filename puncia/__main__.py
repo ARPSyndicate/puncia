@@ -8,12 +8,25 @@ import re
 API_URLS = {
     "subdomain": "http://api.subdomain.center/?domain=",
     "exploit": "http://api.exploit.observer/?keyword=",
+    "russia": "http://api.exploit.observer/russia/",
+    "china": "http://api.exploit.observer/china/",
 }
 
 
-def query_api(mode, query, output_file=None):
-    time.sleep(3)
+def query_api(mode, query, output_file=None, cid=None):
+    time.sleep(6)
     url = API_URLS.get(mode)
+    if "^" in query:
+        if query == "^RU_NON_CVE":
+            url = API_URLS.get("russia")
+            query = "noncve"
+            mode = "spec_exploit"
+            cid = "Russian VIDs with no associated CVEs"
+        if query == "^CN_NON_CVE":
+            url = API_URLS.get("china")
+            query = "noncve"
+            mode = "spec_exploit"
+            cid = "Chinese VIDs with no associated CVEs"
     if not url:
         sys.exit("Invalid Mode")
 
@@ -23,13 +36,20 @@ def query_api(mode, query, output_file=None):
         return
     result = json.dumps(response, indent=4, sort_keys=True)
     print(result)
-
+    if mode in ["spec_exploit"]:
+        for reurl in response:
+            query_api(
+                "exploit",
+                reurl.replace("https://api.exploit.observer/?keyword=", ""),
+                output_file,
+                cid,
+            )
+        return
     if output_file:
         existing_data = {}
         if os.path.isfile(output_file):
             with open(output_file, "r") as f:
                 existing_data = json.load(f)
-
         if mode == "subdomain":
             if len(existing_data) == 0:
                 existing_data = []
@@ -46,9 +66,18 @@ def query_api(mode, query, output_file=None):
                     existing_data["entries"][lang].sort()
             else:
                 existing_data = response
+            if "clusters" in existing_data:
+                existing_data_clusters = existing_data.get("clusters", [])
+                existing_data_clusters.extend(response.get("clusters", []))
+                existing_data["clusters"] = list(set(existing_data_clusters))
+                existing_data["clusters"].sort()
             total_entries = 0
             for lang in existing_data["entries"]:
                 total_entries = len(existing_data["entries"][lang]) + total_entries
+            if "priority" in existing_data:
+                existing_data["priority"] = (
+                    response.get("priority", 1) + existing_data["priority"]
+                ) / 2
             if len(existing_data["description"]) > 0:
                 if "description" in response and len(response["description"]) > 0:
                     existing_data["description"] = response["description"]
@@ -62,6 +91,13 @@ def query_api(mode, query, output_file=None):
                     str(len(existing_data["entries"])) + " file formats",
                     existing_data["description"],
                 )
+                if cid:
+                    existing_data["description"] = re.sub(
+                        r"(?<=related to\s)[^.]+(?=\.)",
+                        cid,
+                        existing_data["description"],
+                    )
+
         with open(output_file, "w") as f:
             json.dump(existing_data, f, indent=4, sort_keys=True)
 
@@ -69,7 +105,7 @@ def query_api(mode, query, output_file=None):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.15]")
+        print("Panthera(P.)uncia [v0.16]")
         print("A.R.P. Syndicate [https://arpsyndicate.io]")
         print("Subdomain Center [https://subdomain.center]")
         print("Exploit Observer [https://exploit.observer]")
