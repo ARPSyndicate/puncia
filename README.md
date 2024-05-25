@@ -66,7 +66,8 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
 28. VARIoT Vulnerabilities (VAR) - [`puncia exploit VAR-202404-0085`](https://api.exploit.observer/?keyword=VAR-202404-0085)
 29. Russian VIDs with no associated CVEs (^RU_NON_CVE) - [`puncia exploit ^RU_NON_CVE`](http://api.exploit.observer/russia/noncve)<br>
 30. Chinese VIDs with no associated CVEs (^CN_NON_CVE) - [`puncia exploit ^CN_NON_CVE`](http://api.exploit.observer/china/noncve)<br>
-31. Technologies/Keywords (No Prefix) - [`puncia exploit grafana`](https://api.exploit.observer/?keyword=grafana)<br>
+31. Vendor/Product (No Prefix) - [`puncia exploit grafana`](https://api.exploit.observer/?keyword=grafana)<br>
+32. Vendor/Product + Version (No Prefix) - [`puncia exploit felixwelberg@1.0.45`](https://api.exploit.observer/?keyword=felixwelberg@1.0.45)<br>
 
 
 ## Noteworthy Mentions
