@@ -14,7 +14,7 @@ API_URLS = {
 
 
 def query_api(mode, query, output_file=None, cid=None):
-    time.sleep(6)
+    time.sleep(8)
     url = API_URLS.get(mode)
     if "^" in query:
         if query == "^RU_NON_CVE":
@@ -105,7 +105,7 @@ def query_api(mode, query, output_file=None, cid=None):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.16]")
+        print("Panthera(P.)uncia [v0.17]")
         print("A.R.P. Syndicate [https://arpsyndicate.io]")
         print("Subdomain Center [https://subdomain.center]")
         print("Exploit Observer [https://exploit.observer]")
@@ -133,18 +133,25 @@ def main():
                 input_file = json.load(f)
             if "subdomain" in input_file:
                 for bulk_query in input_file["subdomain"]:
-                    query_api(
-                        "subdomain",
-                        bulk_query,
-                        output_file + "/subdomain/" + bulk_query + ".json",
-                    )
+                    try:
+                        query_api(
+                            "subdomain",
+                            bulk_query,
+                            output_file + "/subdomain/" + bulk_query + ".json",
+                        )
+                    except Exception as ne:
+                        sys.exit(f"Error: {str(ne)}")
+                        continue
             if "exploit" in input_file:
                 for bulk_query in input_file["exploit"]:
-                    query_api(
-                        "exploit",
-                        bulk_query,
-                        output_file + "/exploit/" + bulk_query + ".json",
-                    )
+                    try:
+                        query_api(
+                            "exploit",
+                            bulk_query,
+                            output_file + "/exploit/" + bulk_query + ".json",
+                        )
+                    except Exception as ne:
+                        sys.exit(f"Error: {str(ne)}")
         else:
             query_api(mode, query, output_file)
     except Exception as e:
