@@ -13,14 +13,18 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
 
 **Please note that although these results can sometimes be pretty inaccurate & unreliable, they can greatly differ from time to time due to their self-improvement capabilities.**
 
+**Aggressive rate-limits can be avoided with an API key: https://arpsyndicate.io/pricing.html**
+
 ## Installation
 1. From PyPi - `pip3 install puncia`
 2. From Source - `pip3 install .`<br>
 
 ## Usage
-1. Subdomain - `puncia subdomain <domain> <output-file>`
-2. Exploit - `puncia exploit <eoidentifier> <output-file>`
-3. Bulk - `puncia exploit <jsonfile> <output-directory>`<br>
+1. Query Domains - `puncia subdomain <domain> <output-file>`
+2. Query Exploit & Vulnerability Identifiers - `puncia exploit <eoidentifier> <output-file>`
+3. Bulk Queries - `puncia exploit <json-file> <output-directory>`<br>
+4. Store an API key - `puncia storekey <api-key>`<br>
+
 ### Bulk Input JSON Format
 ```
 {

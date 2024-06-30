@@ -8,14 +8,36 @@ import re
 API_URLS = {
     "subdomain": "http://api.subdomain.center/?domain=",
     "exploit": "http://api.exploit.observer/?keyword=",
+    "auth_subdomain": "http://api.subdomain.center/beta/?auth={0}&domain=",
+    "auth_exploit": "http://api.exploit.observer/beta/?auth={0}&keyword=",
     "russia": "http://api.exploit.observer/russia/",
     "china": "http://api.exploit.observer/china/",
 }
 
 
-def query_api(mode, query, output_file=None, cid=None):
-    time.sleep(8)
-    url = API_URLS.get(mode)
+def store_key(key=""):
+    home = os.path.expanduser("~")
+    with open(home + "/.puncia", "w") as f:
+        f.write(key)
+
+
+def read_key():
+    try:
+        home = os.path.expanduser("~")
+        with open(home + "/.puncia", "r") as f:
+            key = f.read()
+        return key
+    except:
+        pass
+    return ""
+
+
+def query_api(mode, query, output_file=None, cid=None, akey=""):
+    if len(akey) > 0 and mode in ["exploit", "subdomain"]:
+        url = API_URLS.get("auth_" + mode).format(akey)
+    else:
+        time.sleep(60)
+        url = API_URLS.get(mode)
     if "^" in query:
         if query == "^RU_NON_CVE":
             url = API_URLS.get("russia")
@@ -29,7 +51,6 @@ def query_api(mode, query, output_file=None, cid=None):
             cid = "Chinese VIDs with no associated CVEs"
     if not url:
         sys.exit("Invalid Mode")
-
     response = requests.get(url + query).json()
     if not response:
         print("Null response from the API")
@@ -43,6 +64,7 @@ def query_api(mode, query, output_file=None, cid=None):
                 reurl.replace("https://api.exploit.observer/?keyword=", ""),
                 output_file,
                 cid,
+                akey,
             )
         return
     if output_file:
@@ -105,22 +127,21 @@ def query_api(mode, query, output_file=None, cid=None):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.17]")
+        print("Panthera(P.)uncia [v0.18]")
         print("A.R.P. Syndicate [https://arpsyndicate.io]")
-        print("Subdomain Center [https://subdomain.center]")
-        print("Exploit Observer [https://exploit.observer]")
         print("---------")
 
         if len(sys.argv) < 3:
             sys.exit(
-                "usage: puncia <mode:subdomain/exploit/bulk> <query:domain/eoidentifier/jsonfile> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
+                "usage: puncia <mode:subdomain/exploit/bulk/storekey> <query:domain/eoidentifier/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
             )
 
         mode = sys.argv[1]
         query = sys.argv[2]
         output_file = sys.argv[3] if len(sys.argv) == 4 else None
+        akey = read_key()
 
-        if mode not in API_URLS and mode != "bulk":
+        if mode not in API_URLS and mode != "bulk" and mode != "storekey":
             sys.exit("Invalid Mode")
 
         if mode == "bulk":
@@ -129,6 +150,8 @@ def main():
             if output_file:
                 os.makedirs(output_file + "/subdomain/", exist_ok=True)
                 os.makedirs(output_file + "/exploit/", exist_ok=True)
+            else:
+                sys.exit("Bulk Mode requires an Output Directory")
             with open(query, "r") as f:
                 input_file = json.load(f)
             if "subdomain" in input_file:
@@ -138,6 +161,7 @@ def main():
                             "subdomain",
                             bulk_query,
                             output_file + "/subdomain/" + bulk_query + ".json",
+                            akey=akey,
                         )
                     except Exception as ne:
                         sys.exit(f"Error: {str(ne)}")
@@ -149,11 +173,17 @@ def main():
                             "exploit",
                             bulk_query,
                             output_file + "/exploit/" + bulk_query + ".json",
+                            akey=akey,
                         )
                     except Exception as ne:
                         sys.exit(f"Error: {str(ne)}")
+
+        elif mode == "storekey":
+            store_key(query)
+            print("Successful!")
+
         else:
-            query_api(mode, query, output_file)
+            query_api(mode, query, output_file, akey=akey)
     except Exception as e:
         sys.exit(f"Error: {str(e)}")
 
