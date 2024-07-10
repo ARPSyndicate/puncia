@@ -61,7 +61,7 @@ def query_api(mode, query, output_file=None, cid=None, akey=""):
         for reurl in response:
             query_api(
                 "exploit",
-                reurl.replace("https://api.exploit.observer/?keyword=", ""),
+                reurl,
                 output_file,
                 cid,
                 akey,
@@ -127,7 +127,7 @@ def query_api(mode, query, output_file=None, cid=None, akey=""):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.18]")
+        print("Panthera(P.)uncia [v0.19]")
         print("A.R.P. Syndicate [https://arpsyndicate.io]")
         print("---------")
 
