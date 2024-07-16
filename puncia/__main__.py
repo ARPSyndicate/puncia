@@ -8,10 +8,13 @@ import re
 API_URLS = {
     "subdomain": "http://api.subdomain.center/?domain=",
     "exploit": "http://api.exploit.observer/?keyword=",
+    "enrich": "http://api.exploit.observer/?enrich=True&keyword=",
     "auth_subdomain": "http://api.subdomain.center/beta/?auth={0}&domain=",
     "auth_exploit": "http://api.exploit.observer/beta/?auth={0}&keyword=",
+    "auth_enrich": "http://api.exploit.observer/beta/?auth={0}&enrich=True&keyword=",
     "russia": "http://api.exploit.observer/russia/",
     "china": "http://api.exploit.observer/china/",
+    "watchlist": "http://api.exploit.observer/watchlist/",
 }
 
 
@@ -33,12 +36,12 @@ def read_key():
 
 
 def query_api(mode, query, output_file=None, cid=None, akey=""):
-    if len(akey) > 0 and mode in ["exploit", "subdomain"]:
+    if len(akey) > 0 and mode in ["exploit", "subdomain", "enrich"]:
         url = API_URLS.get("auth_" + mode).format(akey)
     else:
         time.sleep(60)
         url = API_URLS.get(mode)
-    if "^" in query:
+    if "^" in query and "exploit" in mode:
         if query == "^RU_NON_CVE":
             url = API_URLS.get("russia")
             query = "noncve"
@@ -49,6 +52,11 @@ def query_api(mode, query, output_file=None, cid=None, akey=""):
             query = "noncve"
             mode = "spec_exploit"
             cid = "Chinese VIDs with no associated CVEs"
+        if query == "^WATCHLIST":
+            url = API_URLS.get("watchlist")
+            query = ""
+            mode = "spec_exploit"
+            cid = "Daily Vulnerability & Exploit Watchlist"
     if not url:
         sys.exit("Invalid Mode")
     response = requests.get(url + query).json()
@@ -77,6 +85,8 @@ def query_api(mode, query, output_file=None, cid=None, akey=""):
                 existing_data = []
             existing_data.extend(response)
             existing_data = list(set(existing_data))
+        elif mode == "enrich":
+            existing_data = response
         elif mode == "exploit":
             if "entries" in existing_data and len(existing_data["entries"]) > 0:
                 for lang in existing_data["entries"]:
@@ -127,13 +137,13 @@ def query_api(mode, query, output_file=None, cid=None, akey=""):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.19]")
+        print("Panthera(P.)uncia [v0.20]")
         print("A.R.P. Syndicate [https://arpsyndicate.io]")
         print("---------")
 
         if len(sys.argv) < 3:
             sys.exit(
-                "usage: puncia <mode:subdomain/exploit/bulk/storekey> <query:domain/eoidentifier/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
+                "usage: puncia <mode:subdomain/exploit/enrich/bulk/storekey> <query:domain/eoidentifier/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
             )
 
         mode = sys.argv[1]
@@ -150,6 +160,7 @@ def main():
             if output_file:
                 os.makedirs(output_file + "/subdomain/", exist_ok=True)
                 os.makedirs(output_file + "/exploit/", exist_ok=True)
+                os.makedirs(output_file + "/enrich/", exist_ok=True)
             else:
                 sys.exit("Bulk Mode requires an Output Directory")
             with open(query, "r") as f:
@@ -173,6 +184,17 @@ def main():
                             "exploit",
                             bulk_query,
                             output_file + "/exploit/" + bulk_query + ".json",
+                            akey=akey,
+                        )
+                    except Exception as ne:
+                        sys.exit(f"Error: {str(ne)}")
+            if "enrich" in input_file:
+                for bulk_query in input_file["enrich"]:
+                    try:
+                        query_api(
+                            "enrich",
+                            bulk_query,
+                            output_file + "/enrich/" + bulk_query + ".json",
                             akey=akey,
                         )
                     except Exception as ne:

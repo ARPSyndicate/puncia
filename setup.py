@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="puncia",
-    version="0.19",
+    version="0.20",
     author="A.R.P. Syndicate",
     author_email="ayush@arpsyndicate.io",
     keywords="subdomains subdomain exploits exploit arpsyndicate panthera uncia puncia snow leopard",

@@ -20,27 +20,33 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
 2. From Source - `pip3 install .`<br>
 
 ## Usage
-1. Query Domains - `puncia subdomain <domain> <output-file>`
-2. Query Exploit & Vulnerability Identifiers - `puncia exploit <eoidentifier> <output-file>`
+1. Store an API key (storekey) - `puncia storekey <api-key>`
+2. Query Domains (subdomain) - `puncia subdomain <domain> <output-file>`
+3. Query Exploit & Vulnerability Identifiers (exploit) - `puncia exploit <eoidentifier> <output-file>`
     - Russian VIDs with no associated CVEs (^RU_NON_CVE)
     - Chinese VIDs with no associated CVEs (^CN_NON_CVE)
+    - Daily Vulnerability & Exploit Watchlist (^WATCHLIST)
     - [Supported Vulnerability Identifiers](https://github.com/ARPSyndicate/docs?tab=readme-ov-file#supported-vulnerability-identifiers)
-3. Bulk Queries - `puncia exploit <json-file> <output-directory>`<br>
-4. Store an API key - `puncia storekey <api-key>`<br>
-
-### Bulk Input JSON Format
-```
-{
-    "subdomain": [
-        "domainA.com",
-        "domainB.com"
-    ],
-    "exploit": [
-        "eoidentifierA",
-        "eoidentifierB"
-    ]
-}
-```
+4. Enrich CVE/GHSA Identifiers (enrich) - `puncia enrich <eoidentifier> <output-file>`
+5. Bulk Queries (bulk)- `puncia bulk <json-file> <output-directory>`<br>
+    - Bulk Input JSON File Format
+        ```
+        {
+            "subdomain": [
+                "domainA.com",
+                "domainB.com"
+            ],
+            "exploit": [
+                "eoidentifierA",
+                "eoidentifierB"
+            ],
+            "enrich": [
+                "eoidentifierA",
+                "eoidentifierB"
+            ]
+        }
+        ```
+<br>
 
 ## Noteworthy Mentions
 - [Around 1000 exploitable cybersecurity vulnerabilities that MITRE & NIST ‘might’ have missed but China or Russia didn’t.](https://blog.arpsyndicate.io/over-a-1000-vulnerabilities-that-mitre-nist-might-have-missed-but-china-or-russia-did-not-871b2364a526)
