@@ -6,15 +6,15 @@ import time
 import re
 
 API_URLS = {
-    "subdomain": "http://api.subdomain.center/?domain=",
-    "exploit": "http://api.exploit.observer/?keyword=",
-    "enrich": "http://api.exploit.observer/?enrich=True&keyword=",
-    "auth_subdomain": "http://api.subdomain.center/beta/?auth={0}&domain=",
-    "auth_exploit": "http://api.exploit.observer/beta/?auth={0}&keyword=",
-    "auth_enrich": "http://api.exploit.observer/beta/?auth={0}&enrich=True&keyword=",
-    "russia": "http://api.exploit.observer/russia/",
-    "china": "http://api.exploit.observer/china/",
-    "watchlist": "http://api.exploit.observer/watchlist/",
+    "subdomain": "https://api.subdomain.center/?domain=",
+    "exploit": "https://api.exploit.observer/?keyword=",
+    "enrich": "https://api.exploit.observer/?enrich=True&keyword=",
+    "auth_subdomain": "https://api.subdomain.center/beta/?auth={0}&domain=",
+    "auth_exploit": "https://api.exploit.observer/beta/?auth={0}&keyword=",
+    "auth_enrich": "https://api.exploit.observer/beta/?auth={0}&enrich=True&keyword=",
+    "russia": "https://api.exploit.observer/russia/",
+    "china": "https://api.exploit.observer/china/",
+    "watchlist": "https://api.exploit.observer/watchlist/",
 }
 
 
@@ -137,7 +137,7 @@ def query_api(mode, query, output_file=None, cid=None, akey=""):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.20]")
+        print("Panthera(P.)uncia [v0.21]")
         print("A.R.P. Syndicate [https://arpsyndicate.io]")
         print("---------")
 
