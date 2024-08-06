@@ -22,14 +22,14 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
 ## Usage
 1. Store an API key (storekey) - `puncia storekey <api-key>`
 2. Query Domains (subdomain) - `puncia subdomain <domain> <output-file>`
-3. Query Exploit & Vulnerability Identifiers (exploit) - `puncia exploit <eoidentifier> <output-file>`
-    - Russian VIDs with no associated CVEs (^RU_NON_CVE)
-    - Chinese VIDs with no associated CVEs (^CN_NON_CVE)
-    - Daily Vulnerability & Exploit Watchlist (^WATCHLIST)
-    - [Supported Vulnerability Identifiers](https://github.com/ARPSyndicate/docs?tab=readme-ov-file#supported-vulnerability-identifiers)
-4. Enrich CVE/GHSA Identifiers (enrich) - `puncia enrich <eoidentifier> <output-file>`
-5. Bulk Queries (bulk)- `puncia bulk <json-file> <output-directory>`<br>
-    - Bulk Input JSON File Format
+3. Query Exploit & Vulnerability Identifiers (exploit)
+    - Russian VIDs with no associated CVEs (^RU_NON_CVE) - `puncia exploit ^RU_NON_CVE  <output-file>`
+    - Chinese VIDs with no associated CVEs (^CN_NON_CVE) - `puncia exploit ^CN_NON_CVE  <output-file>`
+    - Daily Vulnerability & Exploit Watchlist (^WATCHLIST) - `puncia exploit ^WATCHLIST  <output-file>`
+    - [Supported Vulnerability Identifiers](https://github.com/ARPSyndicate/docs?tab=readme-ov-file#supported-vulnerability-identifiers) - `puncia exploit <eoidentifier> <output-file>`
+4. Enrich CVE/GHSA Identifiers (enrich) - `puncia enrich <cve-id/ghsa-id> <output-file>`
+5. Multiple Queries (bulk/sbom)
+    - Bulk Input JSON File Format - `puncia bulk <json-file> <output-directory>`
         ```
         {
             "subdomain": [
@@ -46,6 +46,8 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
             ]
         }
         ```
+    - [SBOM Input JSON File Format](https://github.com/CycloneDX/bom-examples/blob/master/SBOM/protonmail-webclient-v4-0912dff/bom.json) - `puncia sbom <json-file> <output-directory>`
+    
 <br>
 
 ## Noteworthy Mentions
@@ -56,6 +58,7 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
 - [Subdomain Enumeration Tool Face-off - 2023 Edition](https://blog.blacklanternsecurity.com/p/subdomain-enumeration-tool-face-off-4e5)
 
 ## More from [A.R.P. Syndicate](https://www.arpsyndicate.io)
-- [Attack Surface Management](https://asm.arpsyndicate.io)
 - [Open Source Intelligence](https://asm.arpsyndicate.io/intelligence.html)
+- [Attack Surface Management](https://asm.arpsyndicate.io)
+- [Vulnerability Advisories AI](https://advisories.arpsyndicate.io)
 - [Free Vulnerability Assessment Report](https://asm.arpsyndicate.io/free-vulnerability-scanning.html)

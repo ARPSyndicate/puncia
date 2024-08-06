@@ -59,7 +59,11 @@ def query_api(mode, query, output_file=None, cid=None, akey=""):
             cid = "Daily Vulnerability & Exploit Watchlist"
     if not url:
         sys.exit("Invalid Mode")
-    response = requests.get(url + query).json()
+    try:
+        response = requests.get(url + query).json()
+    except:
+        print("An exception happened")
+        return
     if not response:
         print("Null response from the API")
         return
@@ -134,16 +138,31 @@ def query_api(mode, query, output_file=None, cid=None, akey=""):
             json.dump(existing_data, f, indent=4, sort_keys=True)
 
 
+def sbom_process(sbom):
+    fingps = []
+
+    def add_component(name, version):
+        if name and version:
+            fingps.append(f"{name}@{version}")
+
+    metadata_component = sbom.get("metadata", {}).get("component", {})
+    add_component(metadata_component.get("name"), metadata_component.get("version"))
+    components = sbom.get("components", [])
+    for subcom in components:
+        add_component(subcom.get("name"), subcom.get("version"))
+    return fingps
+
+
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.21]")
-        print("A.R.P. Syndicate [https://arpsyndicate.io]")
+        print("Panthera(P.)uncia [v0.22]")
+        print("A.R.P. Syndicate [https://www.arpsyndicate.io]")
         print("---------")
 
         if len(sys.argv) < 3:
             sys.exit(
-                "usage: puncia <mode:subdomain/exploit/enrich/bulk/storekey> <query:domain/eoidentifier/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
+                "usage: puncia <mode:subdomain/exploit/enrich/bulk/sbom/storekey> <query:domain/eoidentifier/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
             )
 
         mode = sys.argv[1]
@@ -151,10 +170,15 @@ def main():
         output_file = sys.argv[3] if len(sys.argv) == 4 else None
         akey = read_key()
 
-        if mode not in API_URLS and mode != "bulk" and mode != "storekey":
+        if (
+            mode not in API_URLS
+            and mode != "bulk"
+            and mode != "sbom"
+            and mode != "storekey"
+        ):
             sys.exit("Invalid Mode")
 
-        if mode == "bulk":
+        if mode == "bulk" or mode == "sbom":
             if not os.path.isfile(query):
                 sys.exit("jsonfile as query input required for bulk mode")
             if output_file:
@@ -162,9 +186,13 @@ def main():
                 os.makedirs(output_file + "/exploit/", exist_ok=True)
                 os.makedirs(output_file + "/enrich/", exist_ok=True)
             else:
-                sys.exit("Bulk Mode requires an Output Directory")
+                sys.exit("BULK & SBOM Mode require an Output Directory")
             with open(query, "r") as f:
                 input_file = json.load(f)
+            if mode == "sbom":
+                new_input_file = {"exploit": []}
+                new_input_file["exploit"] = sbom_process(input_file)
+                input_file = new_input_file
             if "subdomain" in input_file:
                 for bulk_query in input_file["subdomain"]:
                     try:
