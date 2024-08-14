@@ -14,7 +14,8 @@ API_URLS = {
     "auth_enrich": "https://api.exploit.observer/beta/?auth={0}&enrich=True&keyword=",
     "russia": "https://api.exploit.observer/russia/",
     "china": "https://api.exploit.observer/china/",
-    "watchlist": "https://api.exploit.observer/watchlist/",
+    "watchlist_ides": "https://api.exploit.observer/watchlist/identifiers",
+    "watchlist_tech": "https://api.exploit.observer/watchlist/technologies",
 }
 
 
@@ -52,24 +53,30 @@ def query_api(mode, query, output_file=None, cid=None, akey=""):
             query = "noncve"
             mode = "spec_exploit"
             cid = "Chinese VIDs with no associated CVEs"
-        if query == "^WATCHLIST":
-            url = API_URLS.get("watchlist")
+        if query == "^WATCHLIST_IDES":
+            url = API_URLS.get("watchlist_ides")
             query = ""
             mode = "spec_exploit"
-            cid = "Daily Vulnerability & Exploit Watchlist"
+            cid = "Vulnerability & Exploit Watchlist"
+        if query == "^WATCHLIST_TECH":
+            url = API_URLS.get("watchlist_tech")
+            query = ""
+            mode = "spec_exploit"
+            cid = "Vulnerable Technologies Watchlist"
     if not url:
         sys.exit("Invalid Mode")
     try:
         response = requests.get(url + query).json()
     except:
-        print("An exception happened")
+        print("An exception happened while requesting: " + query)
         return
-    if not response:
+    if not response or len(response) == 0:
         print("Null response from the API")
         return
     result = json.dumps(response, indent=4, sort_keys=True)
     print(result)
     if mode in ["spec_exploit"]:
+        os.system("rm " + output_file)
         for reurl in response:
             query_api(
                 "exploit",
@@ -156,7 +163,7 @@ def sbom_process(sbom):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.22]")
+        print("Panthera(P.)uncia [v0.23]")
         print("A.R.P. Syndicate [https://www.arpsyndicate.io]")
         print("---------")
 

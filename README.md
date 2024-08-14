@@ -13,7 +13,7 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
 
 **Please note that although these results can sometimes be pretty inaccurate & unreliable, they can greatly differ from time to time due to their self-improvement capabilities.**
 
-**Aggressive rate-limits can be avoided with an API key: https://arpsyndicate.io/pricing.html**
+**Aggressive rate-limits can be avoided with an API key: https://www.arpsyndicate.io/pricing.html**
 
 ## Installation
 1. From PyPi - `pip3 install puncia`
@@ -25,7 +25,8 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
 3. Query Exploit & Vulnerability Identifiers (exploit)
     - Russian VIDs with no associated CVEs (^RU_NON_CVE) - `puncia exploit ^RU_NON_CVE  <output-file>`
     - Chinese VIDs with no associated CVEs (^CN_NON_CVE) - `puncia exploit ^CN_NON_CVE  <output-file>`
-    - Daily Vulnerability & Exploit Watchlist (^WATCHLIST) - `puncia exploit ^WATCHLIST  <output-file>`
+    - Vulnerability & Exploit Identifers Watchlist (^WATCHLIST_IDES) - `puncia exploit ^WATCHLIST_IDES  <output-file>`
+    - Vulnerable Technologies Watchlist (^WATCHLIST_TECH) - `puncia exploit ^WATCHLIST_TECH  <output-file>`
     - [Supported Vulnerability Identifiers](https://github.com/ARPSyndicate/docs?tab=readme-ov-file#supported-vulnerability-identifiers) - `puncia exploit <eoidentifier> <output-file>`
 4. Enrich CVE/GHSA Identifiers (enrich) - `puncia enrich <cve-id/ghsa-id> <output-file>`
 5. Multiple Queries (bulk/sbom)
