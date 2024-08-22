@@ -2,10 +2,10 @@ from setuptools import setup, find_packages
 
 setup(
     name="puncia",
-    version="0.23",
+    version="0.24",
     author="A.R.P. Syndicate",
     author_email="ayush@arpsyndicate.io",
-    keywords="subdomains subdomain exploits exploit arpsyndicate panthera uncia puncia snow leopard",
+    keywords="subdomains subdomain exploits exploit sbom cyclonedx arpsyndicate panthera uncia puncia snow leopard",
     url="https://github.com/ARPSyndicate/puncia",
     project_urls={
         "A.R.P. Syndicate": "https://www.arpsyndicate.io",

@@ -121,6 +121,10 @@ def query_api(mode, query, output_file=None, cid=None, akey=""):
                 existing_data["priority"] = (
                     response.get("priority", 1) + existing_data["priority"]
                 ) / 2
+            if "vedas-timestamp" in response:
+                existing_data["vedas-timestamp"] = response["vedas-timestamp"]
+            if "aliases" in response:
+                existing_data["aliases"] = response["aliases"]
             if len(existing_data["description"]) > 0:
                 if "description" in response and len(response["description"]) > 0:
                     existing_data["description"] = response["description"]
@@ -163,7 +167,7 @@ def sbom_process(sbom):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.23]")
+        print("Panthera(P.)uncia [v0.24]")
         print("A.R.P. Syndicate [https://www.arpsyndicate.io]")
         print("---------")
 
