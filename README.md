@@ -62,4 +62,3 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
 - [Open Source Intelligence](https://asm.arpsyndicate.io/intelligence.html)
 - [Attack Surface Management](https://asm.arpsyndicate.io)
 - [Vulnerability Advisories AI](https://advisories.arpsyndicate.io)
-- [Free Vulnerability Assessment Report](https://asm.arpsyndicate.io/free-vulnerability-scanning.html)
