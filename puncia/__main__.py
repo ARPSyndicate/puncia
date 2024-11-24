@@ -29,18 +29,16 @@ def read_key():
     try:
         home = os.path.expanduser("~")
         with open(home + "/.puncia", "r") as f:
-            key = f.read()
-        return key
-    except:
-        pass
-    return ""
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
 
 
-def query_api(mode, query, output_file=None, cid=None, akey=""):
-    if len(akey) > 0 and mode in ["exploit", "subdomain", "enrich"]:
-        url = API_URLS.get("auth_" + mode).format(akey)
+def query_api(mode, query, output_file=None, cid=None, apikey=""):
+    if len(apikey) > 0 and mode in ["exploit", "subdomain", "enrich"]:
+        url = API_URLS.get("auth_" + mode).format(apikey)
     else:
-        time.sleep(60)
+        time.sleep(25)
         url = API_URLS.get(mode)
     if "^" in query and "exploit" in mode:
         if query == "^RU_NON_CVE":
@@ -65,16 +63,21 @@ def query_api(mode, query, output_file=None, cid=None, akey=""):
             cid = "Vulnerable Technologies Watchlist"
     if not url:
         sys.exit("Invalid Mode")
-    try:
-        response = requests.get(url + query).json()
-    except:
-        print("An exception happened while requesting: " + query)
-        return
+    retries = 3
+    counter = 0
+    response = {}
+    while counter <= retries:
+        try:
+            response = requests.get(url + query).json()
+            if len(response) > 0:
+                break
+        except:
+            print("An exception happened while requesting: " + query)
+        counter = counter + 1
+        time.sleep(60)
     if not response or len(response) == 0:
-        print("Null response from the API")
+        print("Null response from the API for: " + query)
         return
-    result = json.dumps(response, indent=4, sort_keys=True)
-    print(result)
     if mode in ["spec_exploit"]:
         os.system("rm " + output_file)
         for reurl in response:
@@ -83,7 +86,7 @@ def query_api(mode, query, output_file=None, cid=None, akey=""):
                 reurl,
                 output_file,
                 cid,
-                akey,
+                apikey,
             )
         return
     if output_file:
@@ -147,6 +150,8 @@ def query_api(mode, query, output_file=None, cid=None, akey=""):
 
         with open(output_file, "w") as f:
             json.dump(existing_data, f, indent=4, sort_keys=True)
+        return existing_data
+    return response
 
 
 def sbom_process(sbom):
@@ -167,7 +172,7 @@ def sbom_process(sbom):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.24]")
+        print("Panthera(P.)uncia [v0.25]")
         print("A.R.P. Syndicate [https://www.arpsyndicate.io]")
         print("---------")
 
@@ -179,7 +184,7 @@ def main():
         mode = sys.argv[1]
         query = sys.argv[2]
         output_file = sys.argv[3] if len(sys.argv) == 4 else None
-        akey = read_key()
+        apikey = read_key()
 
         if (
             mode not in API_URLS
@@ -207,35 +212,41 @@ def main():
             if "subdomain" in input_file:
                 for bulk_query in input_file["subdomain"]:
                     try:
-                        query_api(
+                        rdata = query_api(
                             "subdomain",
                             bulk_query,
                             output_file + "/subdomain/" + bulk_query + ".json",
-                            akey=akey,
+                            apikey=apikey,
                         )
+                        if len(rdata) > 0:
+                            print(json.dumps(rdata, indent=4, sort_keys=True))
                     except Exception as ne:
                         sys.exit(f"Error: {str(ne)}")
                         continue
             if "exploit" in input_file:
                 for bulk_query in input_file["exploit"]:
                     try:
-                        query_api(
+                        rdata = query_api(
                             "exploit",
                             bulk_query,
                             output_file + "/exploit/" + bulk_query + ".json",
-                            akey=akey,
+                            apikey=apikey,
                         )
+                        if len(rdata) > 0:
+                            print(json.dumps(rdata, indent=4, sort_keys=True))
                     except Exception as ne:
                         sys.exit(f"Error: {str(ne)}")
             if "enrich" in input_file:
                 for bulk_query in input_file["enrich"]:
                     try:
-                        query_api(
+                        rdata = query_api(
                             "enrich",
                             bulk_query,
                             output_file + "/enrich/" + bulk_query + ".json",
-                            akey=akey,
+                            apikey=apikey,
                         )
+                        if len(rdata) > 0:
+                            print(json.dumps(rdata, indent=4, sort_keys=True))
                     except Exception as ne:
                         sys.exit(f"Error: {str(ne)}")
 
@@ -244,7 +255,9 @@ def main():
             print("Successful!")
 
         else:
-            query_api(mode, query, output_file, akey=akey)
+            rdata = query_api(mode, query, output_file, apikey=apikey)
+            if len(rdata) > 0:
+                print(json.dumps(rdata, indent=4, sort_keys=True))
     except Exception as e:
         sys.exit(f"Error: {str(e)}")
 
