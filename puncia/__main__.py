@@ -7,9 +7,11 @@ import re
 
 API_URLS = {
     "subdomain": "https://api.subdomain.center/?domain=",
+    "replica": "https://api.subdomain.center/?engine=octopus&domain=",
     "exploit": "https://api.exploit.observer/?keyword=",
     "enrich": "https://api.exploit.observer/?enrich=True&keyword=",
     "auth_subdomain": "https://api.subdomain.center/beta/?auth={0}&domain=",
+    "auth_replica": "https://api.subdomain.center/beta/?auth={0}&engine=octopus&domain=",
     "auth_exploit": "https://api.exploit.observer/beta/?auth={0}&keyword=",
     "auth_enrich": "https://api.exploit.observer/beta/?auth={0}&enrich=True&keyword=",
     "russia": "https://api.exploit.observer/russia/",
@@ -35,7 +37,7 @@ def read_key():
 
 
 def query_api(mode, query, output_file=None, cid=None, apikey=""):
-    if len(apikey) > 0 and mode in ["exploit", "subdomain", "enrich"]:
+    if len(apikey) > 0 and mode in ["exploit", "subdomain", "enrich", "replica"]:
         url = API_URLS.get("auth_" + mode).format(apikey)
     else:
         time.sleep(25)
@@ -63,7 +65,7 @@ def query_api(mode, query, output_file=None, cid=None, apikey=""):
             cid = "Vulnerable Technologies Watchlist"
     if not url:
         sys.exit("Invalid Mode")
-    retries = 3
+    retries = 1
     counter = 0
     response = {}
     while counter <= retries:
@@ -74,12 +76,15 @@ def query_api(mode, query, output_file=None, cid=None, apikey=""):
         except:
             print("An exception happened while requesting: " + query)
         counter = counter + 1
-        time.sleep(60)
+        time.sleep(30)
     if not response or len(response) == 0:
         print("Null response from the API for: " + query)
         return
     if mode in ["spec_exploit"]:
-        os.system("rm " + output_file)
+        try:
+            os.remove(output_file)
+        except:
+            pass
         for reurl in response:
             query_api(
                 "exploit",
@@ -94,7 +99,7 @@ def query_api(mode, query, output_file=None, cid=None, apikey=""):
         if os.path.isfile(output_file):
             with open(output_file, "r") as f:
                 existing_data = json.load(f)
-        if mode == "subdomain":
+        if "subdomain" in mode or "replica" in mode:
             if len(existing_data) == 0:
                 existing_data = []
             existing_data.extend(response)
@@ -172,13 +177,13 @@ def sbom_process(sbom):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.25]")
+        print("Panthera(P.)uncia [v0.26]")
         print("A.R.P. Syndicate [https://www.arpsyndicate.io]")
         print("---------")
 
         if len(sys.argv) < 3:
             sys.exit(
-                "usage: puncia <mode:subdomain/exploit/enrich/bulk/sbom/storekey> <query:domain/eoidentifier/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
+                "usage: puncia <mode:subdomain/replica/exploit/enrich/bulk/sbom/storekey> <query:domain/eoidentifier/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
             )
 
         mode = sys.argv[1]
@@ -199,6 +204,7 @@ def main():
                 sys.exit("jsonfile as query input required for bulk mode")
             if output_file:
                 os.makedirs(output_file + "/subdomain/", exist_ok=True)
+                os.makedirs(output_file + "/replica/", exist_ok=True)
                 os.makedirs(output_file + "/exploit/", exist_ok=True)
                 os.makedirs(output_file + "/enrich/", exist_ok=True)
             else:
@@ -216,6 +222,20 @@ def main():
                             "subdomain",
                             bulk_query,
                             output_file + "/subdomain/" + bulk_query + ".json",
+                            apikey=apikey,
+                        )
+                        if len(rdata) > 0:
+                            print(json.dumps(rdata, indent=4, sort_keys=True))
+                    except Exception as ne:
+                        sys.exit(f"Error: {str(ne)}")
+                        continue
+            if "replica" in input_file:
+                for bulk_query in input_file["replica"]:
+                    try:
+                        rdata = query_api(
+                            "replica",
+                            bulk_query,
+                            output_file + "/replica/" + bulk_query + ".json",
                             apikey=apikey,
                         )
                         if len(rdata) > 0:

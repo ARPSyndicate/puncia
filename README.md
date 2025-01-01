@@ -26,19 +26,24 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
 
 1.  Store an API key (storekey) - `puncia storekey <api-key>`
 2.  Query Domains (subdomain) - `puncia subdomain <domain> <output-file>`
-3.  Query Exploit & Vulnerability Identifiers (exploit)
+3.  Query Replica Domains (replica) - `puncia replica <domain> <output-file>`
+4.  Query Exploit & Vulnerability Identifiers (exploit)
     - Russian VIDs with no associated CVEs (^RU_NON_CVE) - `puncia exploit ^RU_NON_CVE  <output-file>`
     - Chinese VIDs with no associated CVEs (^CN_NON_CVE) - `puncia exploit ^CN_NON_CVE  <output-file>`
     - Vulnerability & Exploit Identifers Watchlist (^WATCHLIST_IDES) - `puncia exploit ^WATCHLIST_IDES  <output-file>`
     - Vulnerable Technologies Watchlist (^WATCHLIST_TECH) - `puncia exploit ^WATCHLIST_TECH  <output-file>`
     - [Supported Vulnerability Identifiers](https://github.com/ARPSyndicate/docs?tab=readme-ov-file#supported-vulnerability-identifiers) - `puncia exploit <eoidentifier> <output-file>`
-4.  Enrich CVE/GHSA Identifiers (enrich) - `puncia enrich <cve-id/ghsa-id> <output-file>`
-5.  Multiple Queries (bulk/sbom)
+5.  Enrich CVE/GHSA Identifiers (enrich) - `puncia enrich <cve-id/ghsa-id> <output-file>`
+6.  Multiple Queries (bulk/sbom)
 
     - Bulk Input JSON File Format - `puncia bulk <json-file> <output-directory>`
       ```
       {
           "subdomain": [
+              "domainA.com",
+              "domainB.com"
+          ],
+          "replica": [
               "domainA.com",
               "domainB.com"
           ],
@@ -54,7 +59,7 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
       ```
     - [SBOM Input JSON File Format](https://github.com/CycloneDX/bom-examples/blob/master/SBOM/protonmail-webclient-v4-0912dff/bom.json) - `puncia sbom <json-file> <output-directory>`
 
-6.  External Import
+7.  External Import
     ```
         import puncia
 
@@ -81,6 +86,6 @@ Puncia utilizes two of our intelligent APIs to gather the results - <br>
 
 ## More from [A.R.P. Syndicate](https://www.arpsyndicate.io)
 
+- [VEDAS Advisories](https://vedas.arpsyndicate.io)
 - [Open Source Intelligence](https://asm.arpsyndicate.io/intelligence.html)
 - [Attack Surface Management](https://asm.arpsyndicate.io)
-- [Vulnerability Advisories AI](https://advisories.arpsyndicate.io)
