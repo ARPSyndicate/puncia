@@ -10,10 +10,12 @@ API_URLS = {
     "replica": "https://api.subdomain.center/?engine=octopus&domain=",
     "exploit": "https://api.exploit.observer/?keyword=",
     "enrich": "https://api.exploit.observer/?enrich=True&keyword=",
+    "chat": "https://api.osprey.vision/",
     "auth_subdomain": "https://api.subdomain.center/beta/?auth={0}&domain=",
     "auth_replica": "https://api.subdomain.center/beta/?auth={0}&engine=octopus&domain=",
     "auth_exploit": "https://api.exploit.observer/beta/?auth={0}&keyword=",
     "auth_enrich": "https://api.exploit.observer/beta/?auth={0}&enrich=True&keyword=",
+    "auth_chat": "https://api.osprey.vision/beta/",
     "russia": "https://api.exploit.observer/russia/",
     "china": "https://api.exploit.observer/china/",
     "watchlist_ides": "https://api.exploit.observer/watchlist/identifiers",
@@ -37,7 +39,13 @@ def read_key():
 
 
 def query_api(mode, query, output_file=None, cid=None, apikey=""):
-    if len(apikey) > 0 and mode in ["exploit", "subdomain", "enrich", "replica"]:
+    if len(apikey) > 0 and mode in [
+        "exploit",
+        "subdomain",
+        "enrich",
+        "replica",
+        "chat",
+    ]:
         url = API_URLS.get("auth_" + mode).format(apikey)
     else:
         time.sleep(25)
@@ -68,15 +76,32 @@ def query_api(mode, query, output_file=None, cid=None, apikey=""):
     retries = 1
     counter = 0
     response = {}
-    while counter <= retries:
-        try:
-            response = requests.get(url + query).json()
-            if len(response) > 0:
-                break
-        except:
-            print("An exception happened while requesting: " + query)
-        counter = counter + 1
-        time.sleep(30)
+    if mode in ["chat", "auth_chat"]:
+        data = {"prompt": query}
+        if "/beta" in url:
+            data["auth"] = apikey
+        response = requests.post(url, json=data, stream=True)
+        reschat = ""
+        for line in response:
+            if sys.argv[0].endswith("puncia"):
+                print(line.decode("utf-8"), flush=True, end="")
+            reschat += line.decode("utf-8")
+        if sys.argv[0].endswith("puncia"):
+            print("\n")
+        if output_file:
+            with open(output_file, "w") as f:
+                f.write(reschat)
+        return reschat
+    else:
+        while counter <= retries:
+            try:
+                response = requests.get(url + query).json()
+                if len(response) > 0:
+                    break
+            except:
+                print("An exception happened while requesting: " + query)
+            counter = counter + 1
+            time.sleep(30)
     if not response or len(response) == 0:
         print("Null response from the API for: " + query)
         return
@@ -177,13 +202,13 @@ def sbom_process(sbom):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.26]")
+        print("Panthera(P.)uncia [v0.27]")
         print("A.R.P. Syndicate [https://www.arpsyndicate.io]")
         print("---------")
 
         if len(sys.argv) < 3:
             sys.exit(
-                "usage: puncia <mode:subdomain/replica/exploit/enrich/bulk/sbom/storekey> <query:domain/eoidentifier/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
+                "usage: puncia <mode:chat/subdomain/replica/exploit/enrich/bulk/sbom/storekey> <query:prompt/domain/eoidentifier/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
             )
 
         mode = sys.argv[1]
@@ -276,8 +301,9 @@ def main():
 
         else:
             rdata = query_api(mode, query, output_file, apikey=apikey)
-            if len(rdata) > 0:
-                print(json.dumps(rdata, indent=4, sort_keys=True))
+            if mode not in ["chat", "auth_chat"]:
+                if len(rdata) > 0:
+                    print(json.dumps(rdata, indent=4, sort_keys=True))
     except Exception as e:
         sys.exit(f"Error: {str(e)}")
 
