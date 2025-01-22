@@ -16,6 +16,8 @@ API_URLS = {
     "auth_exploit": "https://api.exploit.observer/beta/?auth={0}&keyword=",
     "auth_enrich": "https://api.exploit.observer/beta/?auth={0}&enrich=True&keyword=",
     "auth_chat": "https://api.osprey.vision/beta/",
+    "auth_summarize": "https://api.osprey.vision/summarize/",
+    "summarize": "",
     "russia": "https://api.exploit.observer/russia/",
     "china": "https://api.exploit.observer/china/",
     "watchlist_ides": "https://api.exploit.observer/watchlist/identifiers",
@@ -45,11 +47,15 @@ def query_api(mode, query, output_file=None, cid=None, apikey=""):
         "enrich",
         "replica",
         "chat",
+        "summarize",
     ]:
         url = API_URLS.get("auth_" + mode).format(apikey)
     else:
-        time.sleep(25)
+        time.sleep(5)
         url = API_URLS.get(mode)
+        if len(url) == 0:
+            print("Missing Authentication")
+            return
     if "^" in query and "exploit" in mode:
         if query == "^RU_NON_CVE":
             url = API_URLS.get("russia")
@@ -77,20 +83,43 @@ def query_api(mode, query, output_file=None, cid=None, apikey=""):
     counter = 0
     response = {}
     if mode in ["chat", "auth_chat"]:
-        data = {"prompt": query}
-        if "/beta" in url:
-            data["auth"] = apikey
-        response = requests.post(url, json=data, stream=True)
         reschat = ""
-        for line in response:
+        while counter <= retries:
+            data = {"prompt": query}
+            if "/beta" in url:
+                data["auth"] = apikey
+            response = requests.post(url, json=data, stream=True)
+            for line in response:
+                if sys.argv[0].endswith("puncia"):
+                    print(line.decode("utf-8"), flush=True, end="")
+                reschat += line.decode("utf-8")
             if sys.argv[0].endswith("puncia"):
-                print(line.decode("utf-8"), flush=True, end="")
-            reschat += line.decode("utf-8")
-        if sys.argv[0].endswith("puncia"):
-            print("\n")
-        if output_file:
-            with open(output_file, "w") as f:
-                f.write(reschat)
+                print("\n")
+            if output_file:
+                with open(output_file, "w") as f:
+                    f.write(reschat)
+            if len(reschat) > 1:
+                break
+            counter = counter + 1
+        return reschat
+    elif mode in ["summarize", "auth_summarize"]:
+        reschat = ""
+        while counter <= retries:
+            data = {"links": query}
+            data["auth"] = apikey
+            response = requests.post(url, json=data, stream=True)
+            for line in response:
+                if sys.argv[0].endswith("puncia"):
+                    print(line.decode("utf-8"), flush=True, end="")
+                reschat += line.decode("utf-8")
+            if sys.argv[0].endswith("puncia"):
+                print("\n")
+            if output_file:
+                with open(output_file, "w") as f:
+                    f.write(reschat)
+            if len(reschat) > 1:
+                break
+            counter = counter + 1
         return reschat
     else:
         while counter <= retries:
@@ -101,7 +130,7 @@ def query_api(mode, query, output_file=None, cid=None, apikey=""):
             except:
                 print("An exception happened while requesting: " + query)
             counter = counter + 1
-            time.sleep(30)
+            time.sleep(10)
     if not response or len(response) == 0:
         print("Null response from the API for: " + query)
         return
@@ -202,13 +231,13 @@ def sbom_process(sbom):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.27]")
+        print("Panthera(P.)uncia [v0.28]")
         print("A.R.P. Syndicate [https://www.arpsyndicate.io]")
         print("---------")
 
         if len(sys.argv) < 3:
             sys.exit(
-                "usage: puncia <mode:chat/subdomain/replica/exploit/enrich/bulk/sbom/storekey> <query:prompt/domain/eoidentifier/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
+                "usage: puncia <mode:chat/summarize/subdomain/replica/exploit/enrich/bulk/sbom/storekey> <query:prompt/domain/eoidentifier/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
             )
 
         mode = sys.argv[1]
@@ -301,7 +330,7 @@ def main():
 
         else:
             rdata = query_api(mode, query, output_file, apikey=apikey)
-            if mode not in ["chat", "auth_chat"]:
+            if mode not in ["chat", "auth_chat", "auth_summarize", "summarize"]:
                 if len(rdata) > 0:
                     print(json.dumps(rdata, indent=4, sort_keys=True))
     except Exception as e:

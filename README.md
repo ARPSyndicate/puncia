@@ -1,4 +1,4 @@
-# The Panthera(P.)uncia of Cybersecurity
+# Panthera(P.)uncia
 
 ### Official CLI utility for Osprey Vision, Subdomain Center & Exploit Observer
 
@@ -12,7 +12,7 @@ Puncia utilizes three of our intelligent APIs to gather the results - <br>
 
 - [Subdomain Center - The World's Largest Subdomain & Shadow IT Intelligence Database](https://subdomain.center)<br>
 - [Exploit Observer - The World's Largest Exploit & Vulnerability Intelligence Database](https://exploit.observer)<br>
-- [Osprey Vision - The World's Most Bleeding Edge Cyber Intelligence LLM](https://osprey.vision)
+- [Osprey Vision - The World's Most Bleeding Edge AI for Information Discovery](https://osprey.vision)
 
 **Please note that although these results can sometimes be pretty inaccurate & unreliable, they can greatly differ from time to time due to their self-improvement capabilities.**
 
@@ -25,20 +25,21 @@ Puncia utilizes three of our intelligent APIs to gather the results - <br>
 
 ## Usage
 
-1.  Store an API key (storekey) - `puncia storekey <api-key>`
-2.  Interact with the LLM (chat) - `puncia chat "<prompt>" <output-file>`
-3.  Query Domains (subdomain) - `puncia subdomain <domain> <output-file>`
-4.  Query Replica Domains (replica) - `puncia replica <domain> <output-file>`
-5.  Query Exploit & Vulnerability Identifiers (exploit)
-    - Russian VIDs with no associated CVEs (^RU_NON_CVE) - `puncia exploit ^RU_NON_CVE  <output-file>`
-    - Chinese VIDs with no associated CVEs (^CN_NON_CVE) - `puncia exploit ^CN_NON_CVE  <output-file>`
-    - Vulnerability & Exploit Identifers Watchlist (^WATCHLIST_IDES) - `puncia exploit ^WATCHLIST_IDES  <output-file>`
-    - Vulnerable Technologies Watchlist (^WATCHLIST_TECH) - `puncia exploit ^WATCHLIST_TECH  <output-file>`
-    - [Supported Vulnerability Identifiers](https://github.com/ARPSyndicate/docs?tab=readme-ov-file#supported-vulnerability-identifiers) - `puncia exploit <eoidentifier> <output-file>`
-6.  Enrich CVE/GHSA Identifiers (enrich) - `puncia enrich <cve-id/ghsa-id> <output-file>`
-7.  Multiple Queries (bulk/sbom)
+1.  (PAID) Store an API key (storekey) - `puncia storekey <api-key>`
+2.  (FREEMIUM) Interact with the LLM (chat) - `puncia chat "<prompt>" <output-file>`
+3.  (PAID) Summarize Webpages with the LLM (summarize) - `puncia summarize "<links>" <output-file>`
+4.  (FREEMIUM) Query Domains (subdomain) - `puncia subdomain <domain> <output-file>`
+5.  (FREEMIUM)Query Replica Domains (replica) - `puncia replica <domain> <output-file>`
+6.  Query Exploit & Vulnerability Identifiers (exploit)
+    - (FREE) Russian VIDs with no associated CVEs (^RU_NON_CVE) - `puncia exploit ^RU_NON_CVE  <output-file>` 
+    - (FREE) Chinese VIDs with no associated CVEs (^CN_NON_CVE) - `puncia exploit ^CN_NON_CVE  <output-file>`
+    - (FREE) Vulnerability & Exploit Identifers Watchlist (^WATCHLIST_IDES) - `puncia exploit ^WATCHLIST_IDES  <output-file>`
+    - (FREE) Vulnerable Technologies Watchlist (^WATCHLIST_TECH) - `puncia exploit ^WATCHLIST_TECH  <output-file>`
+    - (FREEMIUM) [Supported Vulnerability Identifiers](https://github.com/ARPSyndicate/docs?tab=readme-ov-file#supported-vulnerability-identifiers) - `puncia exploit <eoidentifier> <output-file>`
+7.  (FREEMIUM) Enrich CVE/GHSA Identifiers (enrich) - `puncia enrich <cve-id/ghsa-id> <output-file>`
+8.  Multiple Queries (bulk/sbom)
 
-    - Bulk Input JSON File Format - `puncia bulk <json-file> <output-directory>`
+    - (FREEMIUM) Bulk Input JSON File Format - `puncia bulk <json-file> <output-directory>`
       ```
       {
           "subdomain": [
@@ -59,9 +60,9 @@ Puncia utilizes three of our intelligent APIs to gather the results - <br>
           ]
       }
       ```
-    - [SBOM Input JSON File Format](https://github.com/CycloneDX/bom-examples/blob/master/SBOM/protonmail-webclient-v4-0912dff/bom.json) - `puncia sbom <json-file> <output-directory>`
+    - (FREEMIUM) [SBOM Input JSON File Format](https://github.com/CycloneDX/bom-examples/blob/master/SBOM/protonmail-webclient-v4-0912dff/bom.json) - `puncia sbom <json-file> <output-directory>`
 
-8.  External Import
+9.  (FREEMIUM) External Import
 
     ```
         import puncia
@@ -76,6 +77,7 @@ Puncia utilizes three of our intelligent APIs to gather the results - <br>
         print(puncia.query_api("subdomain","arpsyndicate.io", apikey=puncia.read_key()))
         print(puncia.query_api("exploit","CVE-2021-3450", apikey=puncia.read_key()))
         print(puncia.query_api("chat","write a xss fuzzer in python", apikey=puncia.read_key()))
+        print(puncia.query_api("summarize","https://www.osintteam.com/combating-the-darkest-depths-of-cyber-intelligence-the-pall-mall-process/", apikey=puncia.read_key()))
 
     ```
 
