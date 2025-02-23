@@ -4,6 +4,7 @@ import sys
 import json
 import time
 import re
+import traceback
 
 API_URLS = {
     "subdomain": "https://api.subdomain.center/?domain=",
@@ -21,6 +22,7 @@ API_URLS = {
     "russia": "https://api.exploit.observer/russia/",
     "china": "https://api.exploit.observer/china/",
     "watchlist_ides": "https://api.exploit.observer/watchlist/identifiers",
+    "watchlist_info": "https://api.exploit.observer/watchlist/describers",
     "watchlist_tech": "https://api.exploit.observer/watchlist/technologies",
 }
 
@@ -72,6 +74,11 @@ def query_api(mode, query, output_file=None, cid=None, apikey=""):
             query = ""
             mode = "spec_exploit"
             cid = "Vulnerability & Exploit Watchlist"
+        if query == "^WATCHLIST_INFO":
+            url = API_URLS.get("watchlist_info")
+            query = ""
+            mode = "spec_exploit"
+            cid = "Vulnerability & Exploit Watchlist (with descriptions)"
         if query == "^WATCHLIST_TECH":
             url = API_URLS.get("watchlist_tech")
             query = ""
@@ -85,52 +92,58 @@ def query_api(mode, query, output_file=None, cid=None, apikey=""):
     if mode in ["chat", "auth_chat"]:
         reschat = ""
         while counter <= retries:
-            data = {"prompt": query}
-            if "/beta" in url:
-                data["auth"] = apikey
-            response = requests.post(url, json=data, stream=True)
-            for line in response:
+            try:
+                data = {"prompt": query}
+                if "/beta" in url:
+                    data["auth"] = apikey
+                response = requests.post(url, json=data, stream=True)
+                for line in response:
+                    if sys.argv[0].endswith("puncia"):
+                        print(line.decode("utf-8"), flush=True, end="")
+                    reschat += line.decode("utf-8")
                 if sys.argv[0].endswith("puncia"):
-                    print(line.decode("utf-8"), flush=True, end="")
-                reschat += line.decode("utf-8")
-            if sys.argv[0].endswith("puncia"):
-                print("\n")
-            if output_file:
-                with open(output_file, "w") as f:
-                    f.write(reschat)
-            if len(reschat) > 1:
-                break
-            counter = counter + 1
+                    print("\n")
+                if output_file:
+                    with open(output_file, "w") as f:
+                        f.write(reschat)
+                counter = counter + 1
+                if reschat and len(reschat) > 1:
+                    break
+            except:
+                continue
         return reschat
     elif mode in ["summarize", "auth_summarize"]:
         reschat = ""
         while counter <= retries:
-            data = {"links": query}
-            data["auth"] = apikey
-            response = requests.post(url, json=data, stream=True)
-            for line in response:
+            try:
+                data = {"links": query}
+                data["auth"] = apikey
+                response = requests.post(url, json=data, stream=True)
+                for line in response:
+                    if sys.argv[0].endswith("puncia"):
+                        print(line.decode("utf-8"), flush=True, end="")
+                    reschat += line.decode("utf-8")
                 if sys.argv[0].endswith("puncia"):
-                    print(line.decode("utf-8"), flush=True, end="")
-                reschat += line.decode("utf-8")
-            if sys.argv[0].endswith("puncia"):
-                print("\n")
-            if output_file:
-                with open(output_file, "w") as f:
-                    f.write(reschat)
-            if len(reschat) > 1:
-                break
-            counter = counter + 1
+                    print("\n")
+                if output_file:
+                    with open(output_file, "w") as f:
+                        f.write(reschat)
+                counter = counter + 1
+                if reschat and len(reschat) > 1:
+                    break
+            except:
+                continue
         return reschat
     else:
         while counter <= retries:
             try:
                 response = requests.get(url + query).json()
-                if len(response) > 0:
+                if response and len(response) > 0:
                     break
             except:
                 print("An exception happened while requesting: " + query)
             counter = counter + 1
-            time.sleep(10)
+            time.sleep(2)
     if not response or len(response) == 0:
         print("Null response from the API for: " + query)
         return
@@ -176,6 +189,16 @@ def query_api(mode, query, output_file=None, cid=None, apikey=""):
                 existing_data_clusters.extend(response.get("clusters", []))
                 existing_data["clusters"] = list(set(existing_data_clusters))
                 existing_data["clusters"].sort()
+            if "aliases" in existing_data:
+                existing_data_clusters = existing_data.get("aliases", [])
+                existing_data_clusters.extend(response.get("aliases", []))
+                existing_data["aliases"] = list(set(existing_data_clusters))
+                existing_data["aliases"].sort()
+            if "products" in existing_data:
+                existing_data_clusters = existing_data.get("products", [])
+                existing_data_clusters.extend(response.get("products", []))
+                existing_data["products"] = list(set(existing_data_clusters))
+                existing_data["products"].sort()
             total_entries = 0
             for lang in existing_data["entries"]:
                 total_entries = len(existing_data["entries"][lang]) + total_entries
@@ -185,8 +208,6 @@ def query_api(mode, query, output_file=None, cid=None, apikey=""):
                 ) / 2
             if "vedas-timestamp" in response:
                 existing_data["vedas-timestamp"] = response["vedas-timestamp"]
-            if "aliases" in response:
-                existing_data["aliases"] = response["aliases"]
             if len(existing_data["description"]) > 0:
                 if "description" in response and len(response["description"]) > 0:
                     existing_data["description"] = response["description"]
@@ -231,7 +252,7 @@ def sbom_process(sbom):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.28]")
+        print("Panthera(P.)uncia [v0.29]")
         print("A.R.P. Syndicate [https://www.arpsyndicate.io]")
         print("---------")
 
@@ -278,10 +299,12 @@ def main():
                             output_file + "/subdomain/" + bulk_query + ".json",
                             apikey=apikey,
                         )
-                        if len(rdata) > 0:
+                        if rdata and len(rdata) > 0:
                             print(json.dumps(rdata, indent=4, sort_keys=True))
                     except Exception as ne:
-                        sys.exit(f"Error: {str(ne)}")
+                        exc_type, exc_value, exc_tb = sys.exc_info()
+                        line_number = exc_tb.tb_lineno
+                        sys.exit(f"Error: {str(ne)} at line {line_number}")
                         continue
             if "replica" in input_file:
                 for bulk_query in input_file["replica"]:
@@ -292,10 +315,12 @@ def main():
                             output_file + "/replica/" + bulk_query + ".json",
                             apikey=apikey,
                         )
-                        if len(rdata) > 0:
+                        if rdata and len(rdata) > 0:
                             print(json.dumps(rdata, indent=4, sort_keys=True))
                     except Exception as ne:
-                        sys.exit(f"Error: {str(ne)}")
+                        exc_type, exc_value, exc_tb = sys.exc_info()
+                        line_number = exc_tb.tb_lineno
+                        sys.exit(f"Error: {str(ne)} at line {line_number}")
                         continue
             if "exploit" in input_file:
                 for bulk_query in input_file["exploit"]:
@@ -306,10 +331,12 @@ def main():
                             output_file + "/exploit/" + bulk_query + ".json",
                             apikey=apikey,
                         )
-                        if len(rdata) > 0:
+                        if rdata and len(rdata) > 0:
                             print(json.dumps(rdata, indent=4, sort_keys=True))
                     except Exception as ne:
-                        sys.exit(f"Error: {str(ne)}")
+                        exc_type, exc_value, exc_tb = sys.exc_info()
+                        line_number = exc_tb.tb_lineno
+                        sys.exit(f"Error: {str(ne)} at line {line_number}")
             if "enrich" in input_file:
                 for bulk_query in input_file["enrich"]:
                     try:
@@ -319,10 +346,12 @@ def main():
                             output_file + "/enrich/" + bulk_query + ".json",
                             apikey=apikey,
                         )
-                        if len(rdata) > 0:
+                        if rdata and len(rdata) > 0:
                             print(json.dumps(rdata, indent=4, sort_keys=True))
                     except Exception as ne:
-                        sys.exit(f"Error: {str(ne)}")
+                        exc_type, exc_value, exc_tb = sys.exc_info()
+                        line_number = exc_tb.tb_lineno
+                        sys.exit(f"Error: {str(ne)} at line {line_number}")
 
         elif mode == "storekey":
             store_key(query)
@@ -331,10 +360,12 @@ def main():
         else:
             rdata = query_api(mode, query, output_file, apikey=apikey)
             if mode not in ["chat", "auth_chat", "auth_summarize", "summarize"]:
-                if len(rdata) > 0:
+                if rdata and len(rdata) > 0:
                     print(json.dumps(rdata, indent=4, sort_keys=True))
-    except Exception as e:
-        sys.exit(f"Error: {str(e)}")
+    except Exception as ne:
+        exc_type, exc_value, exc_tb = sys.exc_info()
+        line_number = exc_tb.tb_lineno
+        sys.exit(f"Error: {str(ne)} at line {line_number}")
 
 
 if __name__ == "__main__":

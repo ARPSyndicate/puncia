@@ -29,11 +29,12 @@ Puncia utilizes three of our intelligent APIs to gather the results - <br>
 2.  (FREEMIUM) Interact with the LLM (chat) - `puncia chat "<prompt>" <output-file>`
 3.  (PAID) Summarize Webpages with the LLM (summarize) - `puncia summarize "<links>" <output-file>`
 4.  (FREEMIUM) Query Domains (subdomain) - `puncia subdomain <domain> <output-file>`
-5.  (FREEMIUM)Query Replica Domains (replica) - `puncia replica <domain> <output-file>`
+5.  (FREEMIUM) Query Replica Domains (replica) - `puncia replica <domain> <output-file>`
 6.  Query Exploit & Vulnerability Identifiers (exploit)
     - (FREE) Russian VIDs with no associated CVEs (^RU_NON_CVE) - `puncia exploit ^RU_NON_CVE  <output-file>` 
     - (FREE) Chinese VIDs with no associated CVEs (^CN_NON_CVE) - `puncia exploit ^CN_NON_CVE  <output-file>`
     - (FREE) Vulnerability & Exploit Identifers Watchlist (^WATCHLIST_IDES) - `puncia exploit ^WATCHLIST_IDES  <output-file>`
+    - (FREE) Vulnerability & Exploit Identifers Watchlist with Descriptions (^WATCHLIST_INFO) - `puncia exploit ^WATCHLIST_INFO  <output-file>`
     - (FREE) Vulnerable Technologies Watchlist (^WATCHLIST_TECH) - `puncia exploit ^WATCHLIST_TECH  <output-file>`
     - (FREEMIUM) [Supported Vulnerability Identifiers](https://github.com/ARPSyndicate/docs?tab=readme-ov-file#supported-vulnerability-identifiers) - `puncia exploit <eoidentifier> <output-file>`
 7.  (FREEMIUM) Enrich CVE/GHSA Identifiers (enrich) - `puncia enrich <cve-id/ghsa-id> <output-file>`
