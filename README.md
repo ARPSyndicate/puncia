@@ -86,6 +86,7 @@ Puncia utilizes three of our intelligent APIs to gather the results - <br>
 
 ## Noteworthy Mentions
 
+- [Passive Subdomain Enumeration: Uncovering More Subdomains than Subfinder & Amass](https://osintteam.com/passive-subdomain-enumeration-uncovering-more-subdomains-than-subfinder-amass/)
 - [Around 1000 exploitable cybersecurity vulnerabilities that MITRE & NIST ‘might’ have missed but China or Russia didn’t.](https://blog.arpsyndicate.io/over-a-1000-vulnerabilities-that-mitre-nist-might-have-missed-but-china-or-russia-did-not-871b2364a526)
 - [Utilizing GitHub Actions for gathering Subdomain & Exploit Intelligence](https://blog.arpsyndicate.io/utilizing-github-actions-for-gathering-subdomain-exploit-intelligence-bbc79c19bb85)
 - [Introducing Exploit Observer — More than Shodan Exploits, Less than Vulners](https://blog.arpsyndicate.io/introducing-exploit-observer-more-than-shodan-exploits-less-than-vulners-23eaea466e4a)

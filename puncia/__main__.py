@@ -189,22 +189,22 @@ def query_api(mode, query, output_file=None, cid=None, apikey=""):
                 existing_data_clusters.extend(response.get("clusters", []))
                 existing_data["clusters"] = list(set(existing_data_clusters))
                 existing_data["clusters"].sort()
-            if "aliases" in existing_data:
-                existing_data_clusters = existing_data.get("aliases", [])
-                existing_data_clusters.extend(response.get("aliases", []))
-                existing_data["aliases"] = list(set(existing_data_clusters))
-                existing_data["aliases"].sort()
+            if "related" in existing_data:
+                existing_data_related = existing_data.get("related", [])
+                existing_data_related.extend(response.get("related", []))
+                existing_data["related"] = list(set(existing_data_related))
+                existing_data["related"].sort()
             if "products" in existing_data:
-                existing_data_clusters = existing_data.get("products", [])
-                existing_data_clusters.extend(response.get("products", []))
-                existing_data["products"] = list(set(existing_data_clusters))
+                existing_data_products = existing_data.get("products", [])
+                existing_data_products.extend(response.get("products", []))
+                existing_data["products"] = list(set(existing_data_products))
                 existing_data["products"].sort()
             total_entries = 0
             for lang in existing_data["entries"]:
                 total_entries = len(existing_data["entries"][lang]) + total_entries
-            if "priority" in existing_data:
-                existing_data["priority"] = (
-                    response.get("priority", 1) + existing_data["priority"]
+            if "popularity" in existing_data:
+                existing_data["popularity"] = (
+                    response.get("popularity", 1) + existing_data["popularity"]
                 ) / 2
             if "vedas-timestamp" in response:
                 existing_data["vedas-timestamp"] = response["vedas-timestamp"]
@@ -252,7 +252,7 @@ def sbom_process(sbom):
 def main():
     try:
         print("---------")
-        print("Panthera(P.)uncia [v0.29]")
+        print("Panthera(P.)uncia [v0.30]")
         print("A.R.P. Syndicate [https://www.arpsyndicate.io]")
         print("---------")
 
