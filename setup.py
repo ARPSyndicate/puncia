@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="puncia",
-    version="0.30",
+    version="0.31",
     author="A.R.P. Syndicate",
     author_email="ayush@arpsyndicate.io",
     keywords="information discovery cyber intelligence llm ai chat subdomains subdomain exploits exploit sbom cyclonedx arpsyndicate panthera uncia puncia snow leopard",
@@ -20,6 +20,9 @@ setup(
     packages=find_packages(),
     install_requires=[
         "requests",
+        "aiohttp",
+        "aiofiles",
+        "asyncio"
     ],
-    entry_points={"console_scripts": ["puncia=puncia.__main__:main"]},
+    entry_points={"console_scripts": ["puncia=puncia.__main__:scriptrun"]},
 )

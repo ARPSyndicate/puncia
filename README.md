@@ -67,18 +67,24 @@ Puncia utilizes three of our intelligent APIs to gather the results - <br>
 
     ```
         import puncia
+        import asyncio
 
-        # Without API Key
-        print(puncia.query_api("exploit","CVE-2021-3450"))
-        print(puncia.query_api("subdomain","arpsyndicate.io"))
-        print(puncia.query_api("chat","write a xss fuzzer in python"))
+        async def main():
+            # Without API Key
+            print(await puncia.query_api("exploit", "CVE-2021-3450"))
+            print(await puncia.query_api("subdomain", "arpsyndicate.io"))
+            print(await puncia.query_api("chat", "write a xss fuzzer in python"))
 
-        # With API Key
-        puncia.store_key("ARPS-xxxxxxxxxx")
-        print(puncia.query_api("subdomain","arpsyndicate.io", apikey=puncia.read_key()))
-        print(puncia.query_api("exploit","CVE-2021-3450", apikey=puncia.read_key()))
-        print(puncia.query_api("chat","write a xss fuzzer in python", apikey=puncia.read_key()))
-        print(puncia.query_api("summarize","https://www.osintteam.com/combating-the-darkest-depths-of-cyber-intelligence-the-pall-mall-process/", apikey=puncia.read_key()))
+            # With API Key
+            await puncia.store_key("ARPS-xxxxxxxxxx")
+            api_key = await puncia.read_key()
+            print(await puncia.query_api("subdomain", "arpsyndicate.io", apikey=api_key))
+            print(await puncia.query_api("exploit", "CVE-2021-3450", apikey=api_key))
+            print(await puncia.query_api("chat", "write a xss fuzzer in python", apikey=api_key))
+            print(await puncia.query_api("summarize", "https://www.osintteam.com/combating-the-darkest-depths-of-cyber-intelligence-the-pall-mall-process/", apikey=api_key))
+
+        # Run the main async function
+        asyncio.run(main())
 
     ```
 
