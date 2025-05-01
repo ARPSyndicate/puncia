@@ -18,6 +18,7 @@ API_URLS = {
     "auth_enrich": "https://api.exploit.observer/beta/?auth={0}&enrich=True&keyword=",
     "auth_chat": "https://api.osprey.vision/beta/",
     "auth_summarize": "https://api.osprey.vision/summarize/",
+    "auth_advisory": "https://api.osprey.vision/advisory/",
     "russia": "https://api.exploit.observer/russia/",
     "china": "https://api.exploit.observer/china/",
     "watchlist_ides": "https://api.exploit.observer/watchlist/identifiers",
@@ -50,6 +51,7 @@ async def query_api(mode, query, output_file=None, cid=None, apikey=""):
             "replica",
             "chat",
             "summarize",
+            "advisory",
         ]:
             url = API_URLS.get("auth_" + mode).format(apikey)
         else:
@@ -128,6 +130,26 @@ async def query_api(mode, query, output_file=None, cid=None, apikey=""):
                     counter = counter + 1
                     if reschat and len(reschat) > 1:
                         return reschat
+                elif mode in ["advisory", "auth_advisory"]:
+                    reschat = ""
+                    if len(query.split("|")) == 2:
+                        data = {"vulnid": query.split("|")[0], "lang": query.split("|")[1].upper()}
+                    else:
+                        data = {"vulnid": query, "lang": "ENGLISH"}                   
+                    data["auth"] = apikey
+                    async with session.post(url, json=data) as response:
+                        async for line in response.content:
+                            if sys.argv[0].endswith("puncia"):
+                                print(line.decode("utf-8"), flush=True, end="")
+                            reschat += line.decode("utf-8")
+                        if sys.argv[0].endswith("puncia"):
+                            print("\n")
+                        if output_file:
+                            with open(output_file, "w") as f:
+                                f.write(reschat)
+                    counter = counter + 1
+                    if reschat and len(reschat) > 1:
+                        return reschat
                 else:
                     async with session.get(url + query) as response:
                         response_data = await response.json()
@@ -188,11 +210,11 @@ async def main():
     try:
         if len(sys.argv) < 3:
             print("---------")
-            print("Panthera(P.)uncia [v0.31]")
+            print("Panthera(P.)uncia [v0.32]")
             print("A.R.P. Syndicate [https://www.arpsyndicate.io]")
             print("---------")
             sys.exit(
-                "usage: puncia <mode:chat/summarize/subdomain/replica/exploit/enrich/bulk/sbom/storekey> <query:prompt/domain/eoidentifier/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
+                "usage: puncia <mode:chat/summarize/advisory/subdomain/replica/exploit/enrich/bulk/sbom/storekey> <query:prompt/domain/eoidentifier/eoidentifier|lang/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
             )
 
         mode = sys.argv[1]
@@ -218,7 +240,7 @@ async def main():
             await process_bulk(input_file, output_file, apikey)
         else:
             result = await query_api(mode, query, output_file, apikey=apikey)
-            if result:
+            if result and mode not in ["chat", "summarize", "advisory"]:
                 print(json.dumps(result, indent=4, sort_keys=True))
     except Exception as ne:
         exc_type, exc_value, exc_tb = sys.exc_info()
