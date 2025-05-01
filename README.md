@@ -77,7 +77,7 @@ Puncia utilizes three of our intelligent APIs to gather the results - <br>
 9.  Multiple Queries (bulk/sbom)
 
     - (FREEMIUM) Bulk Input JSON File Format - `puncia bulk <json-file> <output-directory>`
-      ```
+      ```json
       {
           "subdomain": [
               "domainA.com",
@@ -105,7 +105,7 @@ Puncia utilizes three of our intelligent APIs to gather the results - <br>
 
 10.  (FREEMIUM) External Import
 
-    ```
+    ```python
         import puncia
         import asyncio
 
