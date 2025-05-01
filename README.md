@@ -133,11 +133,11 @@ Puncia utilizes three of our intelligent APIs to gather the results - <br>
 <br>
 
 ### CVE Enrichment 
-<img src="cve-enrich-diff.png" width="1500px">
+<img src="https://raw.githubusercontent.com/ARPSyndicate/puncia/master/cve-enrich-diff.png" width="1500px">
 <br>
 
 ### GHSA Enrichment 
-<img src="ghsa-enrich-diff.png" width="1500px">
+<img src="https://raw.githubusercontent.com/ARPSyndicate/puncia/master/ghsa-enrich-diff.png" width="1500px">
 <br>
 
 ## Noteworthy Mentions
