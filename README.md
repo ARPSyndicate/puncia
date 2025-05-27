@@ -66,6 +66,7 @@ Puncia utilizes three of our intelligent APIs to gather the results - <br>
 4.  (FREEMIUM) Query Domains (subdomain) - `puncia subdomain <domain> <output-file>`
 5.  (FREEMIUM) Query Replica Domains (replica) - `puncia replica <domain> <output-file>`
 6.  Query Exploit & Vulnerability Identifiers (exploit)
+    - (FREE) European VIDs with no associated CVEs (^EU_NON_CVE) - `puncia exploit ^EU_NON_CVE  <output-file>` 
     - (FREE) Russian VIDs with no associated CVEs (^RU_NON_CVE) - `puncia exploit ^RU_NON_CVE  <output-file>` 
     - (FREE) Chinese VIDs with no associated CVEs (^CN_NON_CVE) - `puncia exploit ^CN_NON_CVE  <output-file>`
     - (FREE) Vulnerability & Exploit Identifers Watchlist (^WATCHLIST_IDES) - `puncia exploit ^WATCHLIST_IDES  <output-file>`
@@ -151,5 +152,6 @@ Puncia utilizes three of our intelligent APIs to gather the results - <br>
 ## More from [A.R.P. Syndicate](https://www.arpsyndicate.io)
 
 - [VEDAS Advisories](https://vedas.arpsyndicate.io)
+- [CTI Grid](https://ctigrid.arpsyndicate.io)
 - [Open Source Intelligence](https://asm.arpsyndicate.io/intelligence.html)
 - [Attack Surface Management](https://asm.arpsyndicate.io)

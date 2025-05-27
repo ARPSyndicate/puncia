@@ -20,6 +20,7 @@ API_URLS = {
     "auth_summarize": "https://api.osprey.vision/summarize/",
     "auth_advisory": "https://api.osprey.vision/advisory/",
     "russia": "https://api.exploit.observer/russia/",
+    "europe": "https://api.exploit.observer/europe/",
     "china": "https://api.exploit.observer/china/",
     "watchlist_ides": "https://api.exploit.observer/watchlist/identifiers",
     "watchlist_info": "https://api.exploit.observer/watchlist/describers",
@@ -62,7 +63,12 @@ async def query_api(mode, query, output_file=None, cid=None, apikey=""):
                 return
 
         if "^" in query and "exploit" in mode:
-            if query == "^RU_NON_CVE":
+            if query == "^EU_NON_CVE":
+                url = API_URLS.get("europe")
+                query = "noncve"
+                mode = "spec_exploit"
+                cid = "European VIDs with no associated CVEs"
+            elif query == "^RU_NON_CVE":
                 url = API_URLS.get("russia")
                 query = "noncve"
                 mode = "spec_exploit"
@@ -210,7 +216,7 @@ async def main():
     try:
         if len(sys.argv) < 3:
             print("---------")
-            print("Panthera(P.)uncia [v0.32]")
+            print("Panthera(P.)uncia [v0.33]")
             print("A.R.P. Syndicate [https://www.arpsyndicate.io]")
             print("---------")
             sys.exit(
