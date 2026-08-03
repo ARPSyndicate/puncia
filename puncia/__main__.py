@@ -9,19 +9,22 @@ from aiofiles import open as aio_open
 API_URLS = {
     "subdomain": "https://api.subdomain.center/?domain=",
     "replica": "https://api.subdomain.center/?engine=octopus&domain=",
+    "keyword": "https://api.subdomain.center/?engine=ammonites&keyword=",
     "exploit": "https://api.exploit.observer/?keyword=",
     "enrich": "https://api.exploit.observer/?enrich=True&keyword=",
-    "chat": "https://api.osprey.vision/",
-    "auth_subdomain": "https://api.subdomain.center/beta/?auth={0}&domain=",
-    "auth_replica": "https://api.subdomain.center/beta/?auth={0}&engine=octopus&domain=",
-    "auth_exploit": "https://api.exploit.observer/beta/?auth={0}&keyword=",
-    "auth_enrich": "https://api.exploit.observer/beta/?auth={0}&enrich=True&keyword=",
-    "auth_chat": "https://api.osprey.vision/beta/",
-    "auth_summarize": "https://api.osprey.vision/summarize/",
-    "auth_advisory": "https://api.osprey.vision/advisory/",
+    "noncve": "https://api.exploit.observer/noncve/",
     "watchlist_ides": "https://api.exploit.observer/watchlist/identifiers",
     "watchlist_info": "https://api.exploit.observer/watchlist/describers",
     "watchlist_tech": "https://api.exploit.observer/watchlist/technologies",
+}
+
+# per-mode delay to respect unauthenticated ratelimits (seconds)
+NO_AUTH_SLEEP = {
+    "subdomain": 5,
+    "replica": 5,
+    "keyword": 5,
+    "exploit": 31,
+    "enrich": 31,
 }
 
 
@@ -41,25 +44,23 @@ async def read_key():
 
 
 async def query_api(mode, query, output_file=None, cid=None, apikey=""):
-    async with aiohttp.ClientSession() as session:
-        if len(apikey) > 0 and mode in [
-            "exploit",
-            "subdomain",
-            "enrich",
-            "replica",
-            "chat",
-            "summarize",
-            "advisory",
-        ]:
-            url = API_URLS.get("auth_" + mode).format(apikey)
-        else:
-            await asyncio.sleep(5)
-            url = API_URLS.get(mode)
-            if not url:
-                print("Invalid Mode / Missing Authentication")
-                return
+    headers = {"X-API-Key": apikey} if apikey else {}
 
-        if "^" in query and "exploit" in mode:
+    async with aiohttp.ClientSession() as session:
+        url = API_URLS.get(mode)
+        if not url:
+            print("Invalid Mode")
+            return
+
+        if not apikey and mode in NO_AUTH_SLEEP:
+            await asyncio.sleep(NO_AUTH_SLEEP[mode])
+
+        if "|" in query and mode in ["replica", "keyword", "exploit", "enrich"]:
+            query, match = query.split("|", 1)
+            url = url + query + f"&match={match}"
+            query = ""
+
+        if "^" in query and mode == "exploit":
             if query == "^WATCHLIST_IDES":
                 url = API_URLS.get("watchlist_ides")
                 query = ""
@@ -82,87 +83,18 @@ async def query_api(mode, query, output_file=None, cid=None, apikey=""):
 
         while counter <= retries:
             try:
-                if mode in ["chat", "auth_chat"]:
-                    reschat = ""
-                    data = {"prompt": query}
-                    if "/beta" in url:
-                        data["auth"] = apikey
-                    async with session.post(url, json=data) as response:
-                        async for line in response.content:
-                            if sys.argv[0].endswith("puncia"):
-                                print(line.decode("utf-8"), flush=True, end="")
-                            reschat += line.decode("utf-8")
-                        if sys.argv[0].endswith("puncia"):
-                            print("\n")
-                        if output_file:
-                            with open(output_file, "w") as f:
-                                f.write(reschat)
-                    counter = counter + 1
-                    if reschat and len(reschat) > 1:
-                        return reschat
-
-                elif mode in ["summarize", "auth_summarize"]:
-                    reschat = ""
-                    data = {"links": query}
-                    data["auth"] = apikey
-                    async with session.post(url, json=data) as response:
-                        async for line in response.content:
-                            if sys.argv[0].endswith("puncia"):
-                                print(line.decode("utf-8"), flush=True, end="")
-                            reschat += line.decode("utf-8")
-                        if sys.argv[0].endswith("puncia"):
-                            print("\n")
-                        if output_file:
-                            with open(output_file, "w") as f:
-                                f.write(reschat)
-                    counter = counter + 1
-                    if reschat and len(reschat) > 1:
-                        return reschat
-                elif mode in ["advisory", "auth_advisory"]:
-                    reschat = ""
-                    if len(query.split("|")) == 2:
-                        data = {"vulnid": query.split("|")[0], "lang": query.split("|")[1].upper()}
-                    else:
-                        data = {"vulnid": query, "lang": "ENGLISH"}                   
-                    data["auth"] = apikey
-                    async with session.post(url, json=data) as response:
-                        async for line in response.content:
-                            if sys.argv[0].endswith("puncia"):
-                                print(line.decode("utf-8"), flush=True, end="")
-                            reschat += line.decode("utf-8")
-                        if sys.argv[0].endswith("puncia"):
-                            print("\n")
-                        if output_file:
-                            with open(output_file, "w") as f:
-                                f.write(reschat)
-                    counter = counter + 1
-                    if reschat and len(reschat) > 1:
-                        return reschat
-                else:
-                    async with session.get(url + query) as response:
-                        response_data = await response.json()
-
-                if response_data:
-                    if len(response_data) > 1:
-                        break
+                async with session.get(url + query, headers=headers) as response:
+                    response_data = await response.json()
+                break
             except Exception as ne:
+                response_data = None
                 exc_type, exc_value, exc_tb = sys.exc_info()
                 line_number = exc_tb.tb_lineno
                 print(f"Error: {str(ne)} at line {line_number}")
             counter += 1
             await asyncio.sleep(2)
 
-        if response_data and mode == "spec_exploit" and output_file:
-            try:
-                async with aio_open(output_file, "w") as f:
-                    await f.write(json.dumps(response_data, indent=4, sort_keys=True))
-            except Exception as ne:
-                exc_type, exc_value, exc_tb = sys.exc_info()
-                line_number = exc_tb.tb_lineno
-                print(f"Error: {str(ne)} at line {line_number}")
-            return response_data
-
-        if response_data and output_file:
+        if response_data is not None and output_file:
             async with aio_open(output_file, "w") as f:
                 await f.write(json.dumps(response_data, indent=4, sort_keys=True))
 
@@ -198,11 +130,11 @@ async def main():
     try:
         if len(sys.argv) < 3:
             print("---------")
-            print("Panthera(P.)uncia [v0.34]")
+            print("Panthera(P.)uncia [v0.35]")
             print("A.R.P. Syndicate [https://www.arpsyndicate.io]")
             print("---------")
             sys.exit(
-                "usage: puncia <mode:chat/summarize/advisory/subdomain/replica/exploit/enrich/bulk/sbom/storekey> <query:prompt/domain/eoidentifier/eoidentifier|lang/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
+                "usage: puncia <mode:subdomain/replica/keyword/exploit/enrich/noncve/bulk/sbom/storekey> <query:domain/domain/keyword/eoidentifier/eoidentifier/engine/jsonfile/apikey> [output_file/output_directory]\nrefer: https://github.com/ARPSyndicate/puncia#usage"
             )
 
         mode = sys.argv[1]
@@ -228,7 +160,7 @@ async def main():
             await process_bulk(input_file, output_file, apikey)
         else:
             result = await query_api(mode, query, output_file, apikey=apikey)
-            if result and mode not in ["chat", "summarize", "advisory"]:
+            if result is not None:
                 print(json.dumps(result, indent=4, sort_keys=True))
     except Exception as ne:
         exc_type, exc_value, exc_tb = sys.exc_info()
