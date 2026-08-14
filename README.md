@@ -234,9 +234,3 @@ the network, so it is safe to run in any environment.
 - [PUNCIA — The Panthera(P.)uncia of Cybersecurity](https://blog.arpsyndicate.io/puncia-the-panthera-p-uncia-of-cybersecurity-ft-puncia-subdomain-center-exploit-observer-9a9d8cca9576)
 - [Subdomain Enumeration Tool Face-off - 2023 Edition](https://blog.blacklanternsecurity.com/p/subdomain-enumeration-tool-face-off-4e5)
 
-## More from [A.R.P. Syndicate](https://www.arpsyndicate.io)
-
-- [VEDAS Advisories](https://vedas.arpsyndicate.io)
-- [Threat Intelligence](https://ctigrid.arpsyndicate.io)
-- [Open Source Intelligence](https://asm.arpsyndicate.io/intelligence.html)
-- [Attack Surface Management](https://asm.arpsyndicate.io)
