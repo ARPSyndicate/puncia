@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "puncia"
+dynamic = ["version"]
+description = "Subdomain recon, brand-impersonation/shadow-IT discovery & exploit intelligence, from the CLI"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "A.R.P. Syndicate", email = "ayush@arpsyndicate.io" }]
+maintainers = [{ name = "A.R.P. Syndicate", email = "ayush@arpsyndicate.io" }]
+keywords = [
+    "subdomain-enumeration",
+    "subdomain-takeover",
+    "brand-impersonation",
+    "typosquatting",
+    "shadow-it",
+    "attack-surface-management",
+    "external-attack-surface",
+    "osint",
+    "reconnaissance",
+    "red-team",
+    "bug-bounty",
+    "threat-intelligence",
+    "vulnerability-intelligence",
+    "exploit-intelligence",
+    "cve",
+    "ghsa",
+    "epss",
+    "vedas",
+    "sbom",
+    "cyclonedx",
+    "arpsyndicate",
+    "puncia",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Internet :: Name Service (DNS)",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Networking :: Monitoring",
+    "Typing :: Typed",
+]
+dependencies = ["aiohttp>=3.8", "aiofiles>=0.8", "rich>=13.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "build>=1.0"]
+
+[project.urls]
+Homepage = "https://github.com/ARPSyndicate/puncia"
+Repository = "https://github.com/ARPSyndicate/puncia"
+Issues = "https://github.com/ARPSyndicate/puncia/issues"
+"A.R.P. Syndicate" = "https://www.arpsyndicate.io"
+"Subdomain Center" = "https://subdomain.center"
+"Exploit Observer" = "https://exploit.observer"
+
+[project.scripts]
+puncia = "puncia.__main__:scriptrun"
+
+[tool.setuptools]
+packages = ["puncia"]
+
+[tool.setuptools.dynamic]
+version = { attr = "puncia.__about__.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

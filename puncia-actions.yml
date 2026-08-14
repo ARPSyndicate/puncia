@@ -1,37 +1,45 @@
+# Sample workflow: schedule recurring subdomain / exploit intelligence collection
+# and commit the results back to the repository.
+#
+# Copy this to .github/workflows/puncia.yml in your own repo, add an
+# `inputs.json` next to it (see the README's bulk input format), and store your
+# API key as a repository secret named PUNCIA_API_KEY.
+
 name: puncia-actions
 
 on:
   schedule:
     - cron: '0 0 * * *'
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   puncia:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.9'
+      - uses: actions/checkout@v4
 
-    - name: Install Puncia
-      run: |
-        pip3 install puncia
-    
-    - name: Run Puncia
-      run: |
-        puncia bulk ${{ github.workspace }}/inputs.json ${{ github.workspace }}/
-    
-    - name: Commit and push changes
-      run: |
-        git config --local user.email "puncia@github.local"
-        git config --local user.name "Puncia Actions"
-        git add .
-        git commit -m "$(date)"
-        git push
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Puncia
+        run: pip install puncia
+
+      - name: Run Puncia
+        env:
+          # Optional, but lifts the free-tier ratelimits. Without it the run
+          # still works, just paced much more slowly.
+          PUNCIA_API_KEY: ${{ secrets.PUNCIA_API_KEY }}
+        run: puncia bulk inputs.json ./results
+
+      - name: Commit and push results
+        run: |
+          git config --local user.email "puncia@github.local"
+          git config --local user.name "Puncia Actions"
+          git add ./results
+          git diff --staged --quiet || git commit -m "puncia: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push
