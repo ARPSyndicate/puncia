@@ -24,6 +24,7 @@ from urllib.parse import quote, urlencode
 
 import aiohttp
 from aiofiles import open as aio_open
+from multidict import CIMultiDict
 from rich.console import Console
 from rich.json import JSON
 from rich.panel import Panel
@@ -51,8 +52,11 @@ EXPLOIT_HOST = "exploit.observer"
 
 #: Minimum seconds between unauthenticated requests, per host. Authenticated
 #: keys have no ratelimit, so these are only applied when no key is present.
-#: exploit.observer allows 2 requests/minute per IP; 31s leaves a safety margin.
-FREE_TIER_INTERVAL = {SUBDOMAIN_HOST: 5.0, EXPLOIT_HOST: 31.0}
+#: Documented anonymous limits: subdomain.center 5 req/min (>=12s apart),
+#: exploit.observer 2 req/min (>=30s apart); both padded for safety margin.
+#: Static endpoints (health/stats/watchlists) are documented as unlimited at
+#: both tiers and are exempted from this entirely — see `_is_static_query`.
+FREE_TIER_INTERVAL = {SUBDOMAIN_HOST: 13.0, EXPLOIT_HOST: 31.0}
 
 DEFAULT_TIMEOUT = 60.0
 DEFAULT_RETRIES = 2
@@ -88,6 +92,7 @@ class Mode:
     values: tuple = ()  # permitted values for path-based modes
     scope_param: str = ""  # optional secondary param narrowing the search
     paid: bool = False
+    crawl_capable: bool = False  # supports --crawl (cuttlefish engine only)
     help: str = ""
 
 
@@ -96,6 +101,7 @@ MODES: dict[str, Mode] = {
         SUBDOMAIN_API,
         SUBDOMAIN_HOST,
         param="domain",
+        crawl_capable=True,
         help="subdomains of a domain (cuttlefish engine) — attack surface & shadow IT",
     ),
     "replica": Mode(
@@ -139,12 +145,23 @@ MODES: dict[str, Mode] = {
     ),
 }
 
-#: Pseudo-queries under `exploit` that map to the unauthenticated watchlists.
-WATCHLISTS = {
-    "^WATCHLIST_IDES": "watchlist/identifiers",
-    "^WATCHLIST_INFO": "watchlist/describers",
-    "^WATCHLIST_TECH": "watchlist/technologies",
+#: Pseudo-queries that dispatch to a static, unauthenticated, unlimited
+#: endpoint instead of the mode's normal parameterized query. Keyed by
+#: (mode, query) since the same "^HEALTH" spelling means a different URL
+#: depending on which API the mode belongs to.
+STATIC_ENDPOINTS: dict[tuple, str] = {
+    ("subdomain", "^HEALTH"): SUBDOMAIN_API + "health",
+    ("exploit", "^WATCHLIST_IDES"): EXPLOIT_API + "watchlist/identifiers",
+    ("exploit", "^WATCHLIST_INFO"): EXPLOIT_API + "watchlist/describers",
+    ("exploit", "^WATCHLIST_TECH"): EXPLOIT_API + "watchlist/technologies",
+    ("exploit", "^STATS"): EXPLOIT_API + "stats",
+    ("exploit", "^HEALTH"): EXPLOIT_API + "health",
 }
+
+
+def _is_static_query(mode: str, query: str) -> bool:
+    return (mode, query) in STATIC_ENDPOINTS
+
 
 BULK_MODES = ("bulk", "sbom")
 ALL_MODES = tuple(MODES) + BULK_MODES + ("storekey",)
@@ -187,6 +204,13 @@ async def read_key() -> str:
 # Request building (pure, and therefore easy to test)
 # --------------------------------------------------------------------------- #
 
+#: Exploit Observer caps `keyword` at 2048 characters and, unlike every other
+#: validation failure on that endpoint, does not error on an oversized one —
+#: it just returns `[]`. Rejecting it client-side turns that into a clear
+#: error instead of a silent empty result.
+MAX_KEYWORD_LENGTH = 2048
+
+
 def build_request(
     mode: str,
     query: str,
@@ -194,16 +218,20 @@ def build_request(
     scope: str = "",
     limit: Optional[int] = None,
     offset: Optional[int] = None,
+    crawl: bool = False,
 ) -> str:
-    """Resolve a mode/query/match/scope/limit/offset tuple into a full URL.
+    """Resolve a mode/query/match/scope/limit/offset/crawl tuple into a full URL.
 
     ``scope`` narrows a keyword search to one domain (Subdomain Center's
     ammonites engine accepts ``keyword`` and ``domain`` together). ``limit``
-    and ``offset`` page through an authenticated Subdomain Center result;
-    they are not meaningful for Exploit Observer endpoints.
+    and ``offset`` page through an authenticated Subdomain Center result.
+    ``crawl`` supplements a `subdomain` (cuttlefish) query with a live
+    discovery pass. None of the three are meaningful for Exploit Observer.
 
     Raises :class:`PunciaError` if the mode is unknown or the arguments are not
-    valid for it. Kept free of I/O so the URL contract can be unit-tested.
+    valid for it. Kept free of I/O so the URL contract can be unit-tested —
+    it has no notion of an API key, so it cannot enforce that `crawl` needs
+    one; that check belongs to the caller (`query_api` does it).
     """
     spec = MODES.get(mode)
     if spec is None:
@@ -216,18 +244,26 @@ def build_request(
         raise PunciaError(f"--limit must be >= 0, got {limit}")
     if offset is not None and offset < 0:
         raise PunciaError(f"--offset must be >= 0, got {offset}")
+    if crawl and not spec.crawl_capable:
+        raise PunciaError(f"mode {mode!r} does not support --crawl (only `subdomain` does)")
 
     # `query|match` is the legacy inline spelling of `--match`.
     if "|" in query and spec.matches:
         query, _, inline_match = query.partition("|")
         match = match or inline_match
 
-    if mode == "exploit" and query in WATCHLISTS:
-        return spec.url + WATCHLISTS[query]
+    if _is_static_query(mode, query):
+        return STATIC_ENDPOINTS[(mode, query)]
 
     query = query.strip()
     if not query:
         raise PunciaError(f"mode {mode!r} requires a non-empty query")
+
+    if mode in ("exploit", "enrich") and len(query) > MAX_KEYWORD_LENGTH:
+        raise PunciaError(
+            f"keyword is {len(query)} chars, over Exploit Observer's "
+            f"{MAX_KEYWORD_LENGTH}-char limit (it would silently return [] instead of erroring)"
+        )
 
     if match:
         if not spec.matches:
@@ -261,6 +297,8 @@ def build_request(
         params["limit"] = str(limit)
     if offset is not None:
         params["offset"] = str(offset)
+    if crawl:
+        params["crawl"] = "true"
     return spec.url + "?" + urlencode(params)
 
 
@@ -316,6 +354,30 @@ async def _session_scope(session: Optional[aiohttp.ClientSession], timeout: floa
         yield owned
 
 
+def _extract_error_message(body_text: str) -> Optional[str]:
+    """Pull the `error` field out of a `{"error": "..."}` body, if present."""
+    try:
+        parsed = json.loads(body_text)
+    except (ValueError, TypeError):
+        return None
+    if isinstance(parsed, dict) and isinstance(parsed.get("error"), str):
+        return parsed["error"]
+    return None
+
+
+def _parse_retry_after(value: Optional[str], fallback: float) -> float:
+    """Interpret a `Retry-After` header (seconds form only) or use ``fallback``."""
+    if value is not None:
+        try:
+            seconds = float(value)
+        except ValueError:
+            pass
+        else:
+            if seconds >= 0:
+                return seconds
+    return fallback
+
+
 async def _fetch(
     session: aiohttp.ClientSession,
     url: str,
@@ -325,13 +387,17 @@ async def _fetch(
     timeout: float,
 ) -> tuple:
     """GET ``url`` and return ``(decoded_json, response_headers)``, retrying
-    transient failures. ``response_headers`` is a plain dict, safe to use
-    after the connection closes."""
+    transient failures. ``response_headers`` is a case-insensitive mapping
+    (servers routinely send ``x-truncated`` over HTTP/2 rather than
+    ``X-Truncated``; a plain ``dict`` would silently break every header
+    lookup in this module), safe to use after the connection closes."""
     last_error: Optional[PunciaError] = None
 
     for attempt in range(retries + 1):
         if limiter is not None:
             await limiter.acquire()
+        status: Optional[int] = None
+        retry_after: Optional[str] = None
         try:
             async with session.get(url, headers=headers) as response:
                 status = response.status
@@ -340,8 +406,9 @@ async def _fetch(
                         data = await response.json(content_type=None)
                     except (ValueError, aiohttp.ContentTypeError) as exc:
                         raise PunciaError(f"malformed JSON in response: {exc}") from exc
-                    return data, dict(response.headers)
-                snippet = (await response.text())[:200].strip()
+                    return data, CIMultiDict(response.headers)
+                retry_after = response.headers.get("Retry-After")
+                body_text = (await response.text())[:500].strip()
         except asyncio.TimeoutError:
             last_error = PunciaError(f"request timed out after {timeout:g}s: {url}")
         except aiohttp.ClientError as exc:
@@ -354,13 +421,17 @@ async def _fetch(
                 )
             if status == 404:
                 raise PunciaError(f"not found (HTTP 404): {url}")
-            last_error = PunciaError(f"HTTP {status}{': ' + snippet if snippet else ''}")
+            message = _extract_error_message(body_text) or body_text[:200]
+            last_error = PunciaError(f"HTTP {status}{': ' + message if message else ''}")
             # Only ratelimits and server faults are worth another attempt.
             if status != 429 and not 500 <= status < 600:
                 raise last_error
 
         if attempt < retries:
-            await asyncio.sleep(BACKOFF_BASE * (2 ** attempt))
+            delay = BACKOFF_BASE * (2 ** attempt)
+            if status == 429:
+                delay = _parse_retry_after(retry_after, delay)
+            await asyncio.sleep(delay)
 
     raise last_error or PunciaError(f"request failed: {url}")
 
@@ -381,6 +452,8 @@ async def _fetch_all_pages(
     retries: int,
     timeout: float,
     on_page: Optional[Callable[[int, int], None]] = None,
+    crawl: bool = False,
+    on_crawl: Optional[Callable[[CIMultiDict], None]] = None,
 ) -> Any:
     """Walk every page of an authenticated Subdomain Center result and merge it.
 
@@ -392,13 +465,21 @@ async def _fetch_all_pages(
     explicit continue signal" as "this is everything" means this function is
     a correct single-page fetch today and starts walking automatically the
     moment the server finishes shipping the feature — no client change needed.
+
+    ``crawl`` is only ever sent on the first page — live-crawl results are
+    additive on top of the normal paginated set, and a domain is only
+    actually re-crawled once every ~6h regardless, so repeating it on every
+    page would just be a wasted round-trip.
     """
     merged: list = []
     offset = 0
 
     for page_number in range(1, MAX_PAGES + 1):
-        url = build_request(mode, query, match, scope, limit=limit, offset=offset)
+        page_crawl = crawl and page_number == 1
+        url = build_request(mode, query, match, scope, limit=limit, offset=offset, crawl=page_crawl)
         data, resp_headers = await _fetch(session, url, headers, limiter, retries, timeout)
+        if page_crawl and on_crawl is not None:
+            on_crawl(resp_headers)
 
         if not isinstance(data, list):
             if page_number == 1:
@@ -473,8 +554,10 @@ async def query_api(
     scope: str = "",
     limit: Optional[int] = None,
     offset: Optional[int] = None,
-    on_headers: Optional[Callable[[dict], None]] = None,
+    crawl: bool = False,
+    on_headers: Optional[Callable[[CIMultiDict], None]] = None,
     on_page: Optional[Callable[[int, int], None]] = None,
+    on_crawl: Optional[Callable[[CIMultiDict], None]] = None,
     session: Optional[aiohttp.ClientSession] = None,
     limiter: Optional[RateLimiter] = None,
     timeout: float = DEFAULT_TIMEOUT,
@@ -492,31 +575,46 @@ async def query_api(
     is called after each page during an automatic walk as
     ``on_page(page_number, rows_so_far)``.
 
+    ``crawl`` supplements a ``subdomain`` query with a live discovery pass
+    (requires ``apikey``); ``on_crawl`` receives that request's response
+    headers (``X-Crawl-Status``, ``X-Crawl-New-Count``).
+
+    Watchlist/health/stats pseudo-queries (``^WATCHLIST_TECH``, ``^HEALTH``,
+    ``^STATS``) are unlimited and unauthenticated regardless of ``apikey``,
+    so they skip both rate limiting and pagination.
+
     Raises :class:`PunciaError` on invalid input or an unrecoverable request
     failure. An empty result (``{}`` / ``[]``) is a legitimate answer and is
     returned, and written to ``output_file``, like any other.
     """
     spec = MODES.get(mode)
     if spec is None:
-        build_request(mode, query, match, scope, limit, offset)  # raises with a clear message
+        build_request(mode, query, match, scope, limit, offset, crawl)  # raises a clear message
+    if crawl and not apikey:
+        raise PunciaError("--crawl requires an API key")
 
+    is_static = _is_static_query(mode, query)
     headers = {"X-API-Key": apikey} if apikey else {}
-    if limiter is None and not apikey:
+    if limiter is None and not apikey and not is_static:
         limiter = RateLimiter(FREE_TIER_INTERVAL.get(spec.host, 0.0))
 
-    auto_paginate = spec.host == SUBDOMAIN_HOST and bool(apikey) and offset is None
+    auto_paginate = (
+        spec.host == SUBDOMAIN_HOST and bool(apikey) and offset is None and not is_static
+    )
 
     async with _session_scope(session, timeout) as active:
         if auto_paginate:
             data = await _fetch_all_pages(
                 active, mode, query, match, scope, limit,
-                headers, limiter, retries, timeout, on_page,
+                headers, limiter, retries, timeout, on_page, crawl, on_crawl,
             )
         else:
-            url = build_request(mode, query, match, scope, limit, offset)
+            url = build_request(mode, query, match, scope, limit, offset, crawl)
             data, resp_headers = await _fetch(active, url, headers, limiter, retries, timeout)
             if on_headers is not None:
                 on_headers(resp_headers)
+            if crawl and on_crawl is not None:
+                on_crawl(resp_headers)
 
     if output_file is not None:
         await write_json(output_file, data)
@@ -610,13 +708,16 @@ async def process_bulk(
     timeout: float = DEFAULT_TIMEOUT,
     retries: int = DEFAULT_RETRIES,
     limit: Optional[int] = None,
+    crawl: bool = False,
     show_progress: bool = True,
 ) -> int:
     """Run every query in ``input_file``, writing results under ``output_directory``.
 
     Authenticated Subdomain Center jobs (``subdomain``/``replica``/``keyword``)
     are paginated automatically to completion, same as a single `query_api`
-    call; ``limit`` optionally sets the page size used while walking.
+    call; ``limit`` optionally sets the page size used while walking. ``crawl``
+    applies a live discovery pass to ``subdomain`` jobs only (the one mode
+    that supports it); it's silently ignored for every other mode present.
 
     Returns the number of failed queries (0 meaning everything succeeded).
     """
@@ -654,15 +755,19 @@ async def process_bulk(
             async def run_job(mode: str, query: str, destination: Path) -> None:
                 async with semaphore:
                     try:
-                        job_limit = limit if MODES[mode].host == SUBDOMAIN_HOST else None
+                        job_spec = MODES[mode]
+                        static = _is_static_query(mode, query)
+                        job_limit = limit if job_spec.host == SUBDOMAIN_HOST else None
+                        job_crawl = crawl and job_spec.crawl_capable
                         await query_api(
                             mode,
                             query,
                             destination,
                             apikey=apikey,
                             limit=job_limit,
+                            crawl=job_crawl,
                             session=session,
-                            limiter=limiters.get(MODES[mode].host),
+                            limiter=None if static else limiters.get(job_spec.host),
                             timeout=timeout,
                             retries=retries,
                         )
@@ -699,17 +804,22 @@ examples:
   puncia keyword vpn --match prefix         hosts carrying a keyword
   puncia keyword vpn --domain example.com   the same, scoped to one domain
   puncia subdomain bandcamp.com --offset 0  one raw page (manual pagination)
+  puncia subdomain example.com --crawl      supplement with a live crawl (needs a key)
   puncia exploit CVE-2021-44228             everything known about a CVE
   puncia enrich GHSA-jfh8-c2jp-5v3q         the same, plus EPSS/VEDAS scoring
   puncia exploit ^WATCHLIST_TECH            currently vulnerable technologies
+  puncia exploit ^STATS                     aggregate vulnerability/exploit counts
   puncia noncve exploitable out.json        non-CVE VEDAS groups (needs a key)
   puncia sbom bom.json ./results            scan a CycloneDX SBOM
   puncia bulk targets.json ./results        run a batch of queries
 
-watchlist pseudo-queries (mode `exploit`, no key required):
-  ^WATCHLIST_IDES   vulnerability & exploit identifiers
-  ^WATCHLIST_INFO   the same, with descriptions
-  ^WATCHLIST_TECH   vulnerable technologies
+static pseudo-queries (unauthenticated, unlimited):
+  puncia subdomain ^HEALTH          subdomain.center service health
+  puncia exploit ^WATCHLIST_IDES    tracked vulnerability & exploit identifiers
+  puncia exploit ^WATCHLIST_INFO    the same, with descriptions
+  puncia exploit ^WATCHLIST_TECH    vulnerable technologies
+  puncia exploit ^STATS             aggregate vulnerability/exploit counts
+  puncia exploit ^HEALTH            exploit.observer service health
 
 An API key lifts ratelimits: `puncia storekey <api-key>` or $PUNCIA_API_KEY.
 Get one at https://www.arpsyndicate.io/pricing.html
@@ -719,6 +829,11 @@ pagination (mode `subdomain`/`replica`/`keyword`, requires an API key):
   authenticated result has no total cap, so this is the "get everything"
   default. Pass --offset (with or without --limit) to fetch exactly one
   raw page yourself instead, e.g. for a resumable/streaming walk.
+
+live crawl (mode `subdomain` only, requires an API key):
+  --crawl supplements stored results with a live discovery pass. A given
+  domain is only actually re-crawled once every ~6h; requests within that
+  window get the cached crawl result instantly.
 """
 
 
@@ -759,6 +874,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DOMAIN",
         default="",
         help="scope a keyword search to one domain (mode `keyword` only)",
+    )
+    parser.add_argument(
+        "--crawl",
+        action="store_true",
+        help="supplement `subdomain` results with a live discovery pass (needs an API key)",
     )
     parser.add_argument(
         "--limit",
@@ -866,45 +986,55 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
             timeout=args.timeout,
             retries=args.retries,
             limit=args.limit,
+            crawl=args.crawl,
             show_progress=not args.quiet,
         )
         return 1 if failures else 0
 
     spec = MODES[args.mode]
+    is_static = _is_static_query(args.mode, args.query)
 
-    if spec.paid and not apikey:
+    if spec.paid and not apikey and not is_static:
         err_console.print(
             f"[yellow]note:[/yellow] mode {args.mode!r} needs an API key; "
             "expect an empty result without one"
         )
 
-    if (args.limit is not None or args.offset is not None) and not apikey:
+    if (args.limit is not None or args.offset is not None) and not apikey and not is_static:
         err_console.print(
             "[yellow]note:[/yellow] --limit/--offset need an API key; the anonymous "
             "tier ignores them and always returns a shuffled sample of up to 500 rows"
         )
 
-    if not apikey and not args.quiet:
+    if not apikey and not args.quiet and not is_static:
         interval = FREE_TIER_INTERVAL.get(spec.host, 0.0)
         if interval:
             err_console.print(
                 f"[dim]no API key — pacing free-tier requests ~{interval:g}s apart[/dim]"
             )
 
-    auto_paginating = spec.host == SUBDOMAIN_HOST and bool(apikey) and args.offset is None
+    auto_paginating = (
+        spec.host == SUBDOMAIN_HOST and bool(apikey) and args.offset is None and not is_static
+    )
     status = (
         err_console.status("[cyan]walking pages...[/cyan]", spinner="dots")
         if auto_paginating and not args.quiet
         else None
     )
-    page_hints: dict = {}
+    # CIMultiDict, not dict: headers arrive over HTTP/2 as e.g. `x-truncated`,
+    # not `X-Truncated` — a plain dict would silently break every .get() below.
+    page_hints: CIMultiDict = CIMultiDict()
+    crawl_hints: CIMultiDict = CIMultiDict()
 
     def _on_page(page_number: int, rows_so_far: int) -> None:
         if status is not None:
             status.update(f"[cyan]walking pages...[/cyan] page {page_number}, {rows_so_far} rows so far")
 
-    def _on_headers(resp_headers: dict) -> None:
+    def _on_headers(resp_headers) -> None:
         page_hints.update(resp_headers)
+
+    def _on_crawl(resp_headers) -> None:
+        crawl_hints.update(resp_headers)
 
     if status is not None:
         status.start()
@@ -918,8 +1048,10 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
             scope=args.domain,
             limit=args.limit,
             offset=args.offset,
+            crawl=args.crawl,
             on_headers=_on_headers,
             on_page=_on_page,
+            on_crawl=_on_crawl,
             timeout=args.timeout,
             retries=args.retries,
         )
@@ -930,6 +1062,12 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
     emit_result(result)
     if args.output:
         err_console.print(f"[bold green]✓[/bold green] written to [bold]{args.output}[/bold]")
+    if crawl_hints:
+        crawl_status = crawl_hints.get("X-Crawl-Status", "unknown")
+        new_count = crawl_hints.get("X-Crawl-New-Count", "0")
+        err_console.print(
+            f"[dim]crawl: {crawl_status}, {new_count} newly discovered name(s)[/dim]"
+        )
     if _truthy_header(page_hints.get("X-Truncated")):
         next_offset = page_hints.get("X-Next-Offset")
         if next_offset is None:

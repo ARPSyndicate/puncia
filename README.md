@@ -18,7 +18,7 @@
 $ puncia subdomain arpsyndicate.io
 ╭──────────────────────────────────────────────────────────────────────╮
 │ Panthera(P.)uncia v0.36                                              │
-│ subdomain recon · brand impersonation · exploit intel · sbom analysis — from the CLI │
+│ subdomain recon · brand impersonation · exploit intel · sbom analysis│
 │ A.R.P. Syndicate — https://www.arpsyndicate.io                       │
 ╰──────────────────────────────────────────────────────────────────────╯
 [
@@ -91,8 +91,8 @@ puncia exploit CVE-2021-44228
 
 ```
 puncia <mode> <query> [output] [--match M] [--domain D] [--limit N] [--offset N]
-                               [--api-key K] [--concurrency N] [--timeout S]
-                               [--retries N] [--quiet]
+                               [--crawl] [--api-key K] [--concurrency N]
+                               [--timeout S] [--retries N] [--quiet]
 ```
 
 Run `puncia --help` for the full reference. Results are printed to **stdout**; the
@@ -117,6 +117,15 @@ banner, progress bars, warnings and errors all go to **stderr**, so
       Anonymous requests ignore `--limit`/`--offset` server-side (always a
       shuffled sample of up to 500 rows); puncia warns rather than pretending
       they did something.
+    - **Live crawl (authenticated only):** `--crawl` supplements stored results
+      with a live discovery pass. A given domain is only actually re-crawled
+      once every ~6h — requests inside that window get the cached crawl result
+      instantly. Puncia reports the outcome on stderr:
+      `crawl: fresh, 12 newly discovered name(s)` (also `partial` / `cooldown` /
+      `disabled`).
+      ```bash
+      puncia subdomain bigco.com --crawl
+      ```
 3.  (FREEMIUM) Query Replica Domains, clustered by brand (replica / `octopus` engine) - `puncia replica <domain> --match <prefix|exact|substring> <output-file>`
 4.  (FREEMIUM) Query by Keyword, clustered by keyword (keyword / `ammonites` engine) - `puncia keyword <keyword> --match <exact|prefix> <output-file>`
     - Optionally scope the keyword to a single domain with `--domain`:
@@ -125,10 +134,15 @@ banner, progress bars, warnings and errors all go to **stderr**, so
     - (FREE) Vulnerability & Exploit Identifers Watchlist (^WATCHLIST_IDES) - `puncia exploit ^WATCHLIST_IDES  <output-file>`
     - (FREE) Vulnerability & Exploit Identifers Watchlist with Descriptions (^WATCHLIST_INFO) - `puncia exploit ^WATCHLIST_INFO  <output-file>`
     - (FREE) Vulnerable Technologies Watchlist (^WATCHLIST_TECH) - `puncia exploit ^WATCHLIST_TECH  <output-file>`
+    - (FREE) Aggregate vulnerability/exploit stats (^STATS) - `puncia exploit ^STATS  <output-file>`
+    - (FREE) Service health (^HEALTH) - `puncia exploit ^HEALTH  <output-file>`
     - (FREEMIUM) [Supported Vulnerability Identifiers](https://github.com/ARPSyndicate/docs?tab=readme-ov-file#supported-vulnerability-identifiers) - `puncia exploit <eoidentifier> --match <substring|prefix|exact> <output-file>`
 6.  (FREEMIUM) Enrich CVE/GHSA Identifiers (enrich) - `puncia enrich <cve-id/ghsa-id> <output-file>`
+    - `enrich=true` only takes effect for `CVE-`/`GHSA-` identifiers; it merges
+      the full upstream advisory record with EPSS + VEDAS scoring.
 7.  (PAID) Non-CVE Identifiers by VEDAS group (noncve) - `puncia noncve <browser/china/russia/europe/exploitable> <output-file>`
-8.  Multiple Queries (bulk/sbom)
+8.  (FREE) Subdomain Center service health (^HEALTH) - `puncia subdomain ^HEALTH <output-file>`
+9.  Multiple Queries (bulk/sbom)
 
     - (FREEMIUM) Bulk Input JSON File Format - `puncia bulk <json-file> <output-directory>`
       ```json
@@ -161,7 +175,7 @@ banner, progress bars, warnings and errors all go to **stderr**, so
     (default 10), and — when no API key is present — pace requests to stay inside
     the free-tier budget automatically.
 
-9.  (FREEMIUM) External Import
+10. (FREEMIUM) External Import
 
    ```python
    import asyncio
@@ -179,6 +193,16 @@ banner, progress bars, warnings and errors all go to **stderr**, so
       print(await puncia.query_api("replica", "arpsyndicate.io", match="exact", apikey=api_key))
       print(await puncia.query_api("enrich", "CVE-2021-3450", apikey=api_key))
       print(await puncia.query_api("noncve", "exploitable", apikey=api_key))
+
+      # Static endpoints (unauthenticated, unlimited)
+      print(await puncia.query_api("subdomain", "^HEALTH"))
+      print(await puncia.query_api("exploit", "^STATS"))
+
+      # Live crawl, with the outcome surfaced via a callback
+      await puncia.query_api(
+          "subdomain", "bigco.com", apikey=api_key, crawl=True,
+          on_crawl=lambda h: print("crawl status:", h.get("X-Crawl-Status")),
+      )
 
       # Write straight to disk
       await puncia.query_api("subdomain", "arpsyndicate.io", "out.json", apikey=api_key)
@@ -233,4 +257,3 @@ the network, so it is safe to run in any environment.
 - [Introducing Exploit Observer — More than Shodan Exploits, Less than Vulners](https://blog.arpsyndicate.io/introducing-exploit-observer-more-than-shodan-exploits-less-than-vulners-23eaea466e4a)
 - [PUNCIA — The Panthera(P.)uncia of Cybersecurity](https://blog.arpsyndicate.io/puncia-the-panthera-p-uncia-of-cybersecurity-ft-puncia-subdomain-center-exploit-observer-9a9d8cca9576)
 - [Subdomain Enumeration Tool Face-off - 2023 Edition](https://blog.blacklanternsecurity.com/p/subdomain-enumeration-tool-face-off-4e5)
-

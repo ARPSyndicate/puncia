@@ -1,0 +1,53 @@
+name: publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:  # manual fallback, e.g. to retry a failed publish
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build distributions
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Verify metadata
+        run: python -m twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # A GitHub Environment named "pypi" is required by PyPI's trusted-publisher
+    # config below. Adding required reviewers to that environment (Settings ->
+    # Environments -> pypi -> Protection rules) turns this into a manual
+    # approval gate even after a release is published, if you want one.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/puncia/
+    permissions:
+      id-token: write  # required for PyPI trusted publishing (OIDC); no token/secret needed
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

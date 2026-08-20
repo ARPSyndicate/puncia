@@ -16,3 +16,4 @@ pypi.sh
 .puncia
 
 .DS_Store
+tests/
