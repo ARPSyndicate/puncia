@@ -49,5 +49,33 @@ jobs:
           name: dist
           path: dist/
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      
+      - name: Mint a PyPI API token via OIDC
+        id: mint
+        run: |
+          set -euo pipefail
+          resp="$(curl -sS -f -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=pypi")"
+          oidc_token="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<< "$resp")"
+
+          mint_resp="$(curl -sS -f -X POST https://pypi.org/_/oidc/mint-token \
+            -H "Content-Type: application/json" \
+            -d "$(python3 -c 'import json,sys; print(json.dumps({"token": sys.argv[1]}))' "$oidc_token")")"
+          api_token="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])' <<< "$mint_resp")"
+
+          # Masks the token in all subsequent log output, then exposes it to
+          # later steps via $PYPI_API_TOKEN without ever writing it to disk.
+          echo "::add-mask::${api_token}"
+          echo "token=${api_token}" >> "$GITHUB_OUTPUT"
+
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        env:
+          PYPI_API_TOKEN: ${{ steps.mint.outputs.token }}
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip twine
+          twine upload -u __token__ -p "${PYPI_API_TOKEN}" dist/*
