@@ -17,7 +17,7 @@
 ```text
 $ puncia subdomain arpsyndicate.io
 ╭──────────────────────────────────────────────────────────────────────╮
-│ Panthera(P.)uncia v0.36                                              │
+│ Panthera(P.)uncia v0.38                                              │
 │ subdomain recon · brand impersonation · exploit intel · sbom analysis│
 │ A.R.P. Syndicate — https://www.arpsyndicate.io                       │
 ╰──────────────────────────────────────────────────────────────────────╯

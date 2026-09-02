@@ -244,6 +244,12 @@ def build_request(
         raise PunciaError(f"--limit must be >= 0, got {limit}")
     if offset is not None and offset < 0:
         raise PunciaError(f"--offset must be >= 0, got {offset}")
+    if offset is not None and offset > 0 and limit is None:
+        raise PunciaError(
+            "--offset > 0 requires --limit too — pagination is stateless "
+            "server-side, so the page size used on an earlier page must be "
+            "repeated on every later one, or the API returns 400"
+        )
     if crawl and not spec.crawl_capable:
         raise PunciaError(f"mode {mode!r} does not support --crawl (only `subdomain` does)")
 
@@ -470,13 +476,22 @@ async def _fetch_all_pages(
     additive on top of the normal paginated set, and a domain is only
     actually re-crawled once every ~6h regardless, so repeating it on every
     page would just be a wasted round-trip.
+
+    Pagination is stateless server-side: ``offset > 0`` with no ``limit=``
+    is now a `400` (the server won't remember page one's page size), so
+    every page after the first must repeat whatever page size page one
+    actually used. If the caller didn't pass ``limit`` explicitly, that
+    size is only known once page one's response comes back (it's the
+    server's own default), so it's captured then and pinned for every
+    later page in the walk.
     """
     merged: list = []
     offset = 0
+    page_limit = limit
 
     for page_number in range(1, MAX_PAGES + 1):
         page_crawl = crawl and page_number == 1
-        url = build_request(mode, query, match, scope, limit=limit, offset=offset, crawl=page_crawl)
+        url = build_request(mode, query, match, scope, limit=page_limit, offset=offset, crawl=page_crawl)
         data, resp_headers = await _fetch(session, url, headers, limiter, retries, timeout)
         if page_crawl and on_crawl is not None:
             on_crawl(resp_headers)
@@ -486,8 +501,11 @@ async def _fetch_all_pages(
                 return data  # e.g. a validation-error payload — surface as-is
             raise PunciaError(
                 f"page {page_number} returned a non-list response mid-walk "
-                f"(offset={offset}); resume manually with --offset {offset}"
+                f"(offset={offset}); resume manually with --offset {offset} --limit {page_limit}"
             )
+
+        if page_number == 1 and page_limit is None:
+            page_limit = len(data) or None
 
         merged.extend(data)
         if on_page is not None:
@@ -516,7 +534,7 @@ async def _fetch_all_pages(
     else:
         raise PunciaError(
             f"pagination did not complete within {MAX_PAGES} pages; "
-            f"pass --offset to continue manually from offset={offset}"
+            f"pass --offset {offset} --limit {page_limit} to continue manually"
         )
 
     return merged
@@ -568,12 +586,13 @@ async def query_api(
     For an authenticated Subdomain Center query (``subdomain``/``replica``/
     ``keyword``) with no explicit ``offset``, every page of the result is
     walked and merged automatically — matching the API's "no total cap for
-    authenticated results" contract. Pass ``offset`` (with or without
-    ``limit``) to fetch exactly one page yourself instead; ``on_headers`` then
-    receives that page's response headers (``X-Truncated``, ``X-Next-Offset``,
-    ``X-Result-Count``) so you know whether and how to continue. ``on_page``
-    is called after each page during an automatic walk as
-    ``on_page(page_number, rows_so_far)``.
+    authenticated results" contract. Pass ``offset`` to fetch exactly one
+    page yourself instead; ``on_headers`` then receives that page's response
+    headers (``X-Truncated``, ``X-Next-Offset``, ``X-Result-Count``) so you
+    know whether and how to continue. Pagination is stateless server-side,
+    so ``offset > 0`` also requires ``limit`` — repeat whatever page size an
+    earlier page used, or the API returns `400`. ``on_page`` is called after
+    each page during an automatic walk as ``on_page(page_number, rows_so_far)``.
 
     ``crawl`` supplements a ``subdomain`` query with a live discovery pass
     (requires ``apikey``); ``on_crawl`` receives that request's response
@@ -827,8 +846,10 @@ Get one at https://www.arpsyndicate.io/pricing.html
 pagination (mode `subdomain`/`replica`/`keyword`, requires an API key):
   With no --offset, every page is walked and merged automatically — an
   authenticated result has no total cap, so this is the "get everything"
-  default. Pass --offset (with or without --limit) to fetch exactly one
-  raw page yourself instead, e.g. for a resumable/streaming walk.
+  default. Pass --offset to fetch exactly one raw page yourself instead,
+  e.g. for a resumable/streaming walk. Pagination is stateless server-side,
+  so any --offset above 0 also needs --limit, repeating whatever page size
+  an earlier page used — the API rejects offset>0 with no limit.
 
 live crawl (mode `subdomain` only, requires an API key):
   --crawl supplements stored results with a live discovery pass. A given
@@ -1070,11 +1091,20 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
         )
     if _truthy_header(page_hints.get("X-Truncated")):
         next_offset = page_hints.get("X-Next-Offset")
+        seen = page_hints.get("X-Result-Count")
         if next_offset is None:
-            seen = page_hints.get("X-Result-Count")
             next_offset = (args.offset or 0) + int(seen) if seen is not None else "?"
+        # offset>0 requires limit= too (pagination is stateless server-side) -
+        # if the caller didn't pin one, the page's own X-Result-Count *is*
+        # the page size the server actually used, so resuming means repeating
+        # that same number, not omitting --limit entirely.
+        effective_limit = args.limit
+        if effective_limit is None and seen is not None:
+            effective_limit = seen
+        limit_hint = f" --limit {effective_limit}" if effective_limit is not None else ""
         err_console.print(
-            f"[yellow]note:[/yellow] more results available — continue with --offset {next_offset}"
+            f"[yellow]note:[/yellow] more results available — continue with "
+            f"--offset {next_offset}{limit_hint}"
         )
     return 0
 
