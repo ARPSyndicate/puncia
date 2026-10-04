@@ -17,7 +17,7 @@
 ```text
 $ puncia subdomain arpsyndicate.io
 ╭──────────────────────────────────────────────────────────────────────╮
-│ Panthera(P.)uncia v0.38                                              │
+│ Panthera(P.)uncia v0.39                                              │
 │ subdomain recon · brand impersonation · exploit intel · sbom analysis│
 │ A.R.P. Syndicate — https://www.arpsyndicate.io                       │
 ╰──────────────────────────────────────────────────────────────────────╯
@@ -91,7 +91,8 @@ puncia exploit CVE-2021-44228
 
 ```
 puncia <mode> <query> [output] [--match M] [--domain D] [--limit N] [--offset N]
-                               [--crawl] [--api-key K] [--concurrency N]
+                               [--crawl] [--filter KEY=VALUE] [--format json|csv]
+                               [--api-key K] [--concurrency N]
                                [--timeout S] [--retries N] [--quiet]
 ```
 
@@ -121,8 +122,9 @@ banner, progress bars, warnings and errors all go to **stderr**, so
       with a live discovery pass. A given domain is only actually re-crawled
       once every ~6h — requests inside that window get the cached crawl result
       instantly. Puncia reports the outcome on stderr:
-      `crawl: fresh, 12 newly discovered name(s)` (also `partial` / `cooldown` /
-      `disabled`).
+      `crawl: fresh, 12 newly discovered name(s)` (also `partial` / `running` /
+      `cooldown` / `disabled`). On `partial`/`running` part of the crawl is
+      still going server-side; re-run with `--crawl` in a minute for the rest.
       ```bash
       puncia subdomain bigco.com --crawl
       ```
@@ -141,8 +143,23 @@ banner, progress bars, warnings and errors all go to **stderr**, so
     - `enrich=true` only takes effect for `CVE-`/`GHSA-` identifiers; it merges
       the full upstream advisory record with EPSS + VEDAS scoring.
 7.  (PAID) Non-CVE Identifiers by VEDAS group (noncve) - `puncia noncve <browser/china/russia/europe/exploitable> <output-file>`
-8.  (FREE) Subdomain Center service health (^HEALTH) - `puncia subdomain ^HEALTH <output-file>`
-9.  Multiple Queries (bulk/sbom)
+8.  (PAID) Nuclei Template Candidates (nuclei) - `puncia nuclei candidates <output-file>`
+    - CVEs that have a VEDAS id and **no nuclei template yet** but look
+      templatable
+    - Every page is fetched and merged automatically; `--limit` sets the page
+      size (max 1000) and `--offset` fetches exactly one page instead.
+    - Narrow with repeatable `--filter KEY=VALUE`: `min_feasibility`, `vendor`,
+      `product`, `platform`, `cwe`, `method`, `protocol`, `kev`, `poc`, `portable`.
+    - **CSV export:** `--format csv`, or just give an output path ending in `.csv`
+      — one row per CVE, list fields joined with `;` (reasons with ` | `), and
+      cells that a spreadsheet would treat as a formula are made inert.
+      ```bash
+      puncia nuclei candidates candidates.csv
+      puncia nuclei candidates wp.csv --filter platform=wordpress --filter poc=true
+      puncia nuclei candidates --filter kev=true --filter min_feasibility=0.5 --format csv > kev.csv
+      ```
+9.  (FREE) Subdomain Center service health (^HEALTH) - `puncia subdomain ^HEALTH <output-file>`
+10. Multiple Queries (bulk/sbom)
 
     - (FREEMIUM) Bulk Input JSON File Format - `puncia bulk <json-file> <output-directory>`
       ```json
@@ -175,7 +192,7 @@ banner, progress bars, warnings and errors all go to **stderr**, so
     (default 10), and — when no API key is present — pace requests to stay inside
     the free-tier budget automatically.
 
-10. (FREEMIUM) External Import
+11. (FREEMIUM) External Import
 
    ```python
    import asyncio
@@ -193,6 +210,13 @@ banner, progress bars, warnings and errors all go to **stderr**, so
       print(await puncia.query_api("replica", "arpsyndicate.io", match="exact", apikey=api_key))
       print(await puncia.query_api("enrich", "CVE-2021-3450", apikey=api_key))
       print(await puncia.query_api("noncve", "exploitable", apikey=api_key))
+
+      # Nuclei template candidates: filtered, every page merged, saved as CSV
+      candidates = await puncia.query_api(
+          "nuclei", "candidates", "candidates.csv", apikey=api_key,
+          filters={"platform": "wordpress", "poc": "true"}, output_format="csv",
+      )
+      print(puncia.candidates_to_csv(candidates))  # or render CSV yourself
 
       # Static endpoints (unauthenticated, unlimited)
       print(await puncia.query_api("subdomain", "^HEALTH"))
@@ -232,7 +256,7 @@ banner, progress bars, warnings and errors all go to **stderr**, so
 git clone https://github.com/ARPSyndicate/puncia && cd puncia
 pip install --upgrade pip     # editable installs need pip >= 21.3
 pip install -e ".[dev]"
-pytest                        # 42 offline tests, no API calls or network access
+pytest                        # 112 offline tests, no API calls or network access
 ```
 
 The test suite is fully offline — it covers URL construction, output-path

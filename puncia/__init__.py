@@ -3,6 +3,9 @@
 from .__about__ import __version__
 from .__main__ import (
     MODES,
+    NUCLEI_CSV_COLUMNS,
+    NUCLEI_FILTERS,
+    candidates_to_csv,
     PunciaError,
     RateLimiter,
     build_request,
@@ -16,6 +19,9 @@ from .__main__ import (
 
 __all__ = [
     "MODES",
+    "NUCLEI_CSV_COLUMNS",
+    "NUCLEI_FILTERS",
+    "candidates_to_csv",
     "PunciaError",
     "RateLimiter",
     "__version__",

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
+import io
 import hashlib
 import json
 import os
@@ -93,8 +95,20 @@ class Mode:
     scope_param: str = ""  # optional secondary param narrowing the search
     paid: bool = False
     crawl_capable: bool = False  # supports --crawl (cuttlefish engine only)
+    filters: tuple = ()  # permitted --filter keys ( () == unsupported )
+    pageable: bool = False  # Exploit Observer endpoint taking limit/offset
     help: str = ""
 
+
+#: Filters `/nuclei/candidates` accepts. Values are validated server-side (a
+#: bad one is a 400 with a message); only the key is checked here, so a typo
+#: in a key fails fast instead of being silently ignored by the server.
+NUCLEI_FILTERS = (
+    "min_feasibility", "vendor", "product", "platform", "cwe", "method",
+    "protocol", "kev", "poc", "portable",
+)
+#: `/nuclei/candidates` serves at most this many rows per page.
+NUCLEI_MAX_PAGE = 1000
 
 MODES: dict[str, Mode] = {
     "subdomain": Mode(
@@ -142,6 +156,15 @@ MODES: dict[str, Mode] = {
         values=("browser", "china", "russia", "europe", "exploitable"),
         paid=True,
         help="non-CVE identifiers clustered by VEDAS group (requires an API key)",
+    ),
+    "nuclei": Mode(
+        EXPLOIT_API + "nuclei/",
+        EXPLOIT_HOST,
+        values=("candidates",),
+        filters=NUCLEI_FILTERS,
+        pageable=True,
+        paid=True,
+        help="CVEs with no nuclei template that look templatable, ranked (requires an API key)",
     ),
 }
 
@@ -219,14 +242,16 @@ def build_request(
     limit: Optional[int] = None,
     offset: Optional[int] = None,
     crawl: bool = False,
+    filters: Optional[dict] = None,
 ) -> str:
-    """Resolve a mode/query/match/scope/limit/offset/crawl tuple into a full URL.
+    """Resolve a mode/query/match/scope/limit/offset/crawl/filters tuple into a full URL.
 
     ``scope`` narrows a keyword search to one domain (Subdomain Center's
     ammonites engine accepts ``keyword`` and ``domain`` together). ``limit``
     and ``offset`` page through an authenticated Subdomain Center result.
     ``crawl`` supplements a `subdomain` (cuttlefish) query with a live
-    discovery pass. None of the three are meaningful for Exploit Observer.
+    discovery pass. Of Exploit Observer's endpoints only `nuclei` pages
+    (``limit``/``offset``) and takes ``filters``.
 
     Raises :class:`PunciaError` if the mode is unknown or the arguments are not
     valid for it. Kept free of I/O so the URL contract can be unit-tested —
@@ -238,13 +263,24 @@ def build_request(
         known = ", ".join(sorted(MODES))
         raise PunciaError(f"unknown mode {mode!r} (expected one of: {known})")
 
-    if (limit is not None or offset is not None) and spec.host != SUBDOMAIN_HOST:
+    if (limit is not None or offset is not None) and spec.host != SUBDOMAIN_HOST and not spec.pageable:
         raise PunciaError(f"mode {mode!r} does not support pagination (--limit/--offset)")
+    if filters:
+        if not spec.filters:
+            raise PunciaError(f"mode {mode!r} does not support --filter")
+        unknown = sorted(set(filters) - set(spec.filters))
+        if unknown:
+            raise PunciaError(
+                f"unknown filter(s) {', '.join(unknown)} for mode {mode!r} "
+                f"(expected: {', '.join(spec.filters)})"
+            )
+    if spec.pageable and limit is not None and not 1 <= limit <= NUCLEI_MAX_PAGE:
+        raise PunciaError(f"--limit for mode {mode!r} must be between 1 and {NUCLEI_MAX_PAGE}")
     if limit is not None and limit < 0:
         raise PunciaError(f"--limit must be >= 0, got {limit}")
     if offset is not None and offset < 0:
         raise PunciaError(f"--offset must be >= 0, got {offset}")
-    if offset is not None and offset > 0 and limit is None:
+    if offset is not None and offset > 0 and limit is None and not spec.pageable:
         raise PunciaError(
             "--offset > 0 requires --limit too — pagination is stateless "
             "server-side, so the page size used on an earlier page must be "
@@ -286,7 +322,13 @@ def build_request(
             raise PunciaError(
                 f"invalid value {query!r} for mode {mode!r} (expected one of: {allowed})"
             )
-        return spec.url + quote(query, safe="")
+        url = spec.url + quote(query, safe="")
+        page_params: dict[str, str] = {k: str(v) for k, v in (filters or {}).items()}
+        if limit is not None:
+            page_params["limit"] = str(limit)
+        if offset is not None:
+            page_params["offset"] = str(offset)
+        return url + ("?" + urlencode(page_params) if page_params else "")
 
     if scope and not spec.scope_param:
         raise PunciaError(f"mode {mode!r} does not support --domain")
@@ -540,6 +582,103 @@ async def _fetch_all_pages(
     return merged
 
 
+async def _fetch_all_candidates(
+    session: aiohttp.ClientSession,
+    mode: str,
+    query: str,
+    limit: Optional[int],
+    filters: Optional[dict],
+    headers: dict,
+    limiter: Optional[RateLimiter],
+    retries: int,
+    timeout: float,
+    on_page: Optional[Callable[[int, int], None]] = None,
+) -> Any:
+    """Walk every page of `/nuclei/candidates` and merge them into one
+    ``{"generated", "total", "offset": 0, "limit", "candidates"}`` body.
+
+    Its paging lives in the body (``total``), not in headers like Subdomain
+    Center's. A ``{}`` first page (no/invalid key) is returned as-is.
+    """
+    page_size = limit or NUCLEI_MAX_PAGE
+    merged: list = []
+    first: Optional[dict] = None
+    offset = 0
+    for page_number in range(1, MAX_PAGES + 1):
+        url = build_request(mode, query, limit=page_size, offset=offset, filters=filters)
+        data, _ = await _fetch(session, url, headers, limiter, retries, timeout)
+        if not isinstance(data, dict) or "candidates" not in data:
+            if page_number == 1:
+                return data
+            raise PunciaError(
+                f"page {page_number} returned an unexpected body mid-walk "
+                f"(offset={offset}); resume manually with --offset {offset}"
+            )
+        if first is None:
+            first = data
+        rows = data.get("candidates") or []
+        merged.extend(rows)
+        if on_page is not None:
+            on_page(page_number, len(merged))
+        offset += len(rows)
+        if not rows or offset >= int(data.get("total") or 0):
+            break
+    else:
+        raise PunciaError(
+            f"pagination did not complete within {MAX_PAGES} pages; "
+            f"pass --offset {offset} to continue manually"
+        )
+    return {**first, "offset": 0, "limit": len(merged), "candidates": merged}
+
+
+#: Column order for `puncia nuclei candidates --format csv`. List fields are
+#: joined with ";" (reasons with " | ", since a reason may contain ";").
+NUCLEI_CSV_COLUMNS = (
+    "cve", "vedas_id", "priority", "feasibility", "impact", "protocol", "method",
+    "authenticated", "product", "platform", "cwe", "cvss", "vedas", "epss", "kev",
+    "poc_sources", "portable_templates", "test_environments", "sibling_templates", "reasons",
+)
+#: A cell starting with one of these is evaluated as a formula by Excel /
+#: Sheets / LibreOffice. Candidate rows carry scraped strings (product names,
+#: repo names), so each such cell is prefixed with "'" to keep it inert.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_cell(value: Any, joiner: str = ";") -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        value = joiner.join(str(v) for v in value)
+    text = str(value)
+    return "'" + text if text.startswith(_CSV_FORMULA_PREFIXES) else text
+
+
+def candidates_to_csv(data: Any) -> str:
+    """Render a `/nuclei/candidates` body (or just its ``candidates`` list)
+    as CSV, one row per CVE in ranked order. ``{}`` (no key) gives a
+    header-only CSV."""
+    rows = data.get("candidates", []) if isinstance(data, dict) else (data or [])
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(NUCLEI_CSV_COLUMNS)
+    for row in rows:
+        shape = row.get("shape") or {}
+        flat = dict(row, protocol=shape.get("protocol"), method=shape.get("method"),
+                    authenticated=shape.get("authenticated"))
+        writer.writerow(
+            _csv_cell(flat.get(col), " | " if col == "reasons" else ";")
+            for col in NUCLEI_CSV_COLUMNS
+        )
+    return buffer.getvalue()
+
+
+async def write_csv(path, data: Any) -> None:
+    async with aio_open(str(path), "w", newline="") as handle:
+        await handle.write(candidates_to_csv(data))
+
+
 def emit_result(data: Any) -> str:
     """Print a result to stdout and return the exact JSON that was rendered.
 
@@ -573,6 +712,8 @@ async def query_api(
     limit: Optional[int] = None,
     offset: Optional[int] = None,
     crawl: bool = False,
+    filters: Optional[dict] = None,
+    output_format: str = "json",
     on_headers: Optional[Callable[[CIMultiDict], None]] = None,
     on_page: Optional[Callable[[int, int], None]] = None,
     on_crawl: Optional[Callable[[CIMultiDict], None]] = None,
@@ -598,6 +739,12 @@ async def query_api(
     (requires ``apikey``); ``on_crawl`` receives that request's response
     headers (``X-Crawl-Status``, ``X-Crawl-New-Count``).
 
+    ``nuclei`` / ``candidates`` takes ``filters`` (keys from
+    :data:`NUCLEI_FILTERS`) and, when authenticated with no ``offset``,
+    walks every page into one body. ``output_format="csv"`` writes
+    ``output_file`` as CSV (see :func:`candidates_to_csv`); the return value
+    is always the decoded JSON.
+
     Watchlist/health/stats pseudo-queries (``^WATCHLIST_TECH``, ``^HEALTH``,
     ``^STATS``) are unlimited and unauthenticated regardless of ``apikey``,
     so they skip both rate limiting and pagination.
@@ -609,6 +756,10 @@ async def query_api(
     spec = MODES.get(mode)
     if spec is None:
         build_request(mode, query, match, scope, limit, offset, crawl)  # raises a clear message
+    if output_format not in ("json", "csv"):
+        raise PunciaError(f"unknown output format {output_format!r} (expected json or csv)")
+    if output_format == "csv" and mode != "nuclei":
+        raise PunciaError("csv output is only supported for mode 'nuclei'")
     if crawl and not apikey:
         raise PunciaError("--crawl requires an API key")
 
@@ -620,15 +771,20 @@ async def query_api(
     auto_paginate = (
         spec.host == SUBDOMAIN_HOST and bool(apikey) and offset is None and not is_static
     )
+    walk_candidates = spec.pageable and bool(apikey) and offset is None
 
     async with _session_scope(session, timeout) as active:
-        if auto_paginate:
+        if walk_candidates:
+            data = await _fetch_all_candidates(
+                active, mode, query, limit, filters, headers, limiter, retries, timeout, on_page,
+            )
+        elif auto_paginate:
             data = await _fetch_all_pages(
                 active, mode, query, match, scope, limit,
                 headers, limiter, retries, timeout, on_page, crawl, on_crawl,
             )
         else:
-            url = build_request(mode, query, match, scope, limit, offset, crawl)
+            url = build_request(mode, query, match, scope, limit, offset, crawl, filters)
             data, resp_headers = await _fetch(active, url, headers, limiter, retries, timeout)
             if on_headers is not None:
                 on_headers(resp_headers)
@@ -636,7 +792,10 @@ async def query_api(
                 on_crawl(resp_headers)
 
     if output_file is not None:
-        await write_json(output_file, data)
+        if output_format == "csv":
+            await write_csv(output_file, data)
+        else:
+            await write_json(output_file, data)
     return data
 
 
@@ -829,12 +988,14 @@ examples:
   puncia exploit ^WATCHLIST_TECH            currently vulnerable technologies
   puncia exploit ^STATS                     aggregate vulnerability/exploit counts
   puncia noncve exploitable out.json        non-CVE VEDAS groups (needs a key)
+  puncia nuclei candidates out.csv          CVEs worth a nuclei template, as CSV (needs a key)
+  puncia nuclei candidates --filter platform=wordpress --filter poc=true
   puncia sbom bom.json ./results            scan a CycloneDX SBOM
   puncia bulk targets.json ./results        run a batch of queries
 
 static pseudo-queries (unauthenticated, unlimited):
   puncia subdomain ^HEALTH          subdomain.center service health
-  puncia exploit ^WATCHLIST_IDES    tracked vulnerability & exploit identifiers
+  puncia exploit ^WATCHLIST_IDES    CVEs trending now + newly exploitable since the last crawl
   puncia exploit ^WATCHLIST_INFO    the same, with descriptions
   puncia exploit ^WATCHLIST_TECH    vulnerable technologies
   puncia exploit ^STATS             aggregate vulnerability/exploit counts
@@ -850,6 +1011,14 @@ pagination (mode `subdomain`/`replica`/`keyword`, requires an API key):
   e.g. for a resumable/streaming walk. Pagination is stateless server-side,
   so any --offset above 0 also needs --limit, repeating whatever page size
   an earlier page used — the API rejects offset>0 with no limit.
+
+nuclei candidates (mode `nuclei`, query `candidates`, requires an API key):
+  CVEs with a VEDAS id and no nuclei template, highest priority first.
+  Every page is fetched and merged unless --offset is given (--limit is
+  the page size, at most 1000). Narrow with repeatable --filter KEY=VALUE:
+  min_feasibility, vendor, product, platform, cwe, method (active, oast,
+  version, fingerprint-first), protocol, kev, poc, portable. --format csv
+  (or an output path ending in .csv) writes one row per CVE.
 
 live crawl (mode `subdomain` only, requires an API key):
   --crawl supplements stored results with a live discovery pass. A given
@@ -895,6 +1064,21 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DOMAIN",
         default="",
         help="scope a keyword search to one domain (mode `keyword` only)",
+    )
+    parser.add_argument(
+        "--filter",
+        dest="filters",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="narrow `nuclei candidates` (repeatable), e.g. --filter kev=true",
+    )
+    parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("json", "csv"),
+        default=None,
+        help="output format; csv is `nuclei` only (default: json, or csv for a .csv output path)",
     )
     parser.add_argument(
         "--crawl",
@@ -948,6 +1132,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="suppress progress output on stderr",
     )
     return parser
+
+
+def _parse_filters(pairs: Sequence[str]) -> dict:
+    filters: dict = {}
+    for pair in pairs:
+        key, sep, value = pair.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or not key or not value:
+            raise PunciaError(f"--filter expects KEY=VALUE, got {pair!r}")
+        if key in filters:
+            raise PunciaError(f"--filter {key} given more than once")
+        filters[key] = value
+    return filters
 
 
 def _non_negative_int(text: str) -> int:
@@ -1014,6 +1211,11 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
 
     spec = MODES[args.mode]
     is_static = _is_static_query(args.mode, args.query)
+    filters = _parse_filters(args.filters)
+    output_format = args.output_format or (
+        "csv" if args.output and str(args.output).lower().endswith(".csv") else "json")
+    if output_format == "csv" and args.mode != "nuclei":
+        raise PunciaError("--format csv is only supported for mode 'nuclei'")
 
     if spec.paid and not apikey and not is_static:
         err_console.print(
@@ -1035,7 +1237,8 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
             )
 
     auto_paginating = (
-        spec.host == SUBDOMAIN_HOST and bool(apikey) and args.offset is None and not is_static
+        (spec.host == SUBDOMAIN_HOST or spec.pageable)
+        and bool(apikey) and args.offset is None and not is_static
     )
     status = (
         err_console.status("[cyan]walking pages...[/cyan]", spinner="dots")
@@ -1070,6 +1273,8 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
             limit=args.limit,
             offset=args.offset,
             crawl=args.crawl,
+            filters=filters,
+            output_format=output_format,
             on_headers=_on_headers,
             on_page=_on_page,
             on_crawl=_on_crawl,
@@ -1080,7 +1285,10 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
         if status is not None:
             status.stop()
 
-    emit_result(result)
+    if output_format == "csv":
+        sys.stdout.write(candidates_to_csv(result))
+    else:
+        emit_result(result)
     if args.output:
         err_console.print(f"[bold green]✓[/bold green] written to [bold]{args.output}[/bold]")
     if crawl_hints:
@@ -1089,6 +1297,14 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
         err_console.print(
             f"[dim]crawl: {crawl_status}, {new_count} newly discovered name(s)[/dim]"
         )
+        # Only the aggregate status, never anything identifying the crawl's
+        # upstreams: which sources back subdomain.center is confidential, and
+        # an older server that still sent per-source headers must not have
+        # them echoed here.
+        if crawl_status in ("partial", "running"):
+            err_console.print(
+                "[dim]crawl: more results still coming — re-run with --crawl in a minute[/dim]"
+            )
     if _truthy_header(page_hints.get("X-Truncated")):
         next_offset = page_hints.get("X-Next-Offset")
         seen = page_hints.get("X-Result-Count")

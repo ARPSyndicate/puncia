@@ -988,3 +988,191 @@ def test_missing_key_file_yields_empty_string(tmp_path, monkeypatch):
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.delenv("PUNCIA_API_KEY", raising=False)
     assert asyncio.run(read_key()) == ""
+
+
+# --------------------------------------------------------------------------- #
+# Exploit Observer nuclei candidates — filters, paging, CSV export
+# --------------------------------------------------------------------------- #
+
+def _candidate(cve, **over):
+    row = {
+        "cve": cve, "vedas_id": "V-" + cve, "priority": 0.27, "feasibility": 0.9, "impact": 0.3,
+        "shape": {"protocol": "http", "method": "active", "authenticated": False},
+        "product": "wordpress:wordpress", "platform": None, "cwe": ["CWE-79"],
+        "cvss": "CVSS:3.1/AV:N", "vedas": 0.04, "epss": 0.004, "kev": False,
+        "poc_sources": ["GITHUB/a/b", "EDB-1"], "portable_templates": [],
+        "test_environments": ["vulhub"], "sibling_templates": ["PD/http/cves/2024/x"],
+        "reasons": ["cwe CWE-79 (3.1x base template rate)", "exploit github (9.7x)"],
+    }
+    row.update(over)
+    return row
+
+
+def test_nuclei_candidates_url_carries_filters_and_paging():
+    url = build_request("nuclei", "candidates", limit=50, offset=100,
+                        filters={"platform": "wordpress", "kev": "true"})
+    assert url.startswith("https://api.exploit.observer/nuclei/candidates?")
+    assert "platform=wordpress" in url and "kev=true" in url
+    assert "limit=50" in url and "offset=100" in url
+
+
+def test_nuclei_candidates_bare_url_has_no_query_string():
+    assert build_request("nuclei", "candidates") == "https://api.exploit.observer/nuclei/candidates"
+
+
+def test_nuclei_only_accepts_the_candidates_query():
+    with pytest.raises(PunciaError, match="expected one of: candidates"):
+        build_request("nuclei", "everything")
+
+
+def test_nuclei_unknown_filter_key_fails_fast():
+    with pytest.raises(PunciaError, match="unknown filter"):
+        build_request("nuclei", "candidates", filters={"severity": "high"})
+
+
+def test_filters_rejected_for_modes_without_them():
+    with pytest.raises(PunciaError, match="does not support --filter"):
+        build_request("exploit", "CVE-2021-44228", filters={"kev": "true"})
+
+
+@pytest.mark.parametrize("limit", [0, 1001])
+def test_nuclei_limit_is_bounded_by_the_server_page_cap(limit):
+    with pytest.raises(PunciaError, match="between 1 and 1000"):
+        build_request("nuclei", "candidates", limit=limit)
+
+
+def test_nuclei_offset_does_not_require_limit():
+    # unlike Subdomain Center, this endpoint's page size defaults server-side
+    assert "offset=200" in build_request("nuclei", "candidates", offset=200)
+
+
+def test_nuclei_walks_every_page_and_merges(monkeypatch):
+    pages = {
+        0: {"generated": "g", "total": 3, "offset": 0, "limit": 2,
+            "candidates": [_candidate("CVE-2026-0001"), _candidate("CVE-2026-0002")]},
+        2: {"generated": "g", "total": 3, "offset": 2, "limit": 2,
+            "candidates": [_candidate("CVE-2026-0003")]},
+    }
+    seen_urls = []
+
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        seen_urls.append(url)
+        offset = int(url.split("offset=")[1].split("&")[0])
+        return pages[offset], CIMultiDict()
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    result = asyncio.run(query_api("nuclei", "candidates", apikey="ARPS-x", limit=2,
+                                   filters={"kev": "true"}))
+    assert [r["cve"] for r in result["candidates"]] == ["CVE-2026-0001", "CVE-2026-0002", "CVE-2026-0003"]
+    assert result["total"] == 3 and result["offset"] == 0
+    assert len(seen_urls) == 2 and all("kev=true" in u for u in seen_urls)
+
+
+def test_nuclei_without_a_key_returns_the_empty_body_after_one_request(monkeypatch):
+    calls = []
+
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        calls.append(url)
+        return {}, CIMultiDict()
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    monkeypatch.setattr(puncia_main.RateLimiter, "acquire", lambda self: asyncio.sleep(0))
+    assert asyncio.run(query_api("nuclei", "candidates")) == {}
+    assert len(calls) == 1
+
+
+def test_nuclei_with_offset_fetches_exactly_one_page(monkeypatch):
+    calls = []
+
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        calls.append(url)
+        return {"total": 9, "candidates": [_candidate("CVE-2026-0009")]}, CIMultiDict()
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    asyncio.run(query_api("nuclei", "candidates", apikey="ARPS-x", offset=8))
+    assert len(calls) == 1 and "offset=8" in calls[0]
+
+
+def test_candidates_csv_has_one_row_per_cve_in_ranked_order():
+    import csv as csv_module
+    from puncia import NUCLEI_CSV_COLUMNS, candidates_to_csv
+
+    body = {"candidates": [_candidate("CVE-2026-0001"), _candidate("CVE-2026-0002", kev=True)]}
+    rows = list(csv_module.DictReader(candidates_to_csv(body).splitlines()))
+    assert list(rows[0]) == list(NUCLEI_CSV_COLUMNS)
+    assert [r["cve"] for r in rows] == ["CVE-2026-0001", "CVE-2026-0002"]
+    first = rows[0]
+    assert first["protocol"] == "http" and first["method"] == "active"
+    assert first["authenticated"] == "false" and rows[1]["kev"] == "true"
+    assert first["poc_sources"] == "GITHUB/a/b;EDB-1"
+    assert first["reasons"] == "cwe CWE-79 (3.1x base template rate) | exploit github (9.7x)"
+    assert first["platform"] == ""
+
+
+def test_candidates_csv_neutralises_spreadsheet_formulas():
+    from puncia import candidates_to_csv
+
+    body = {"candidates": [_candidate("CVE-2026-0001", product='=HYPERLINK("http://x","y")',
+                                      poc_sources=["@evil"])]}
+    text = candidates_to_csv(body)
+    assert "'=HYPERLINK" in text and "'@evil" in text
+
+
+def test_candidates_csv_of_an_unauthenticated_empty_body_is_header_only():
+    from puncia import candidates_to_csv
+
+    text = candidates_to_csv({})
+    assert text.startswith("cve,") and text.count("\n") == 1
+
+
+def test_query_api_writes_csv_to_the_output_file(monkeypatch, tmp_path):
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        return {"total": 1, "candidates": [_candidate("CVE-2026-0001")]}, CIMultiDict()
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    out = tmp_path / "nuclei.csv"
+    asyncio.run(query_api("nuclei", "candidates", out, apikey="ARPS-x", output_format="csv"))
+    lines = out.read_text().splitlines()
+    assert lines[0].startswith("cve,vedas_id,priority") and lines[1].startswith("CVE-2026-0001,")
+
+
+def test_csv_output_is_rejected_for_other_modes():
+    with pytest.raises(PunciaError, match="only supported for mode 'nuclei'"):
+        asyncio.run(query_api("exploit", "CVE-2021-44228", output_format="csv"))
+
+
+def test_cli_csv_output_path_implies_csv_and_stdout_gets_csv(monkeypatch, tmp_path, capsys):
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        return {"total": 1, "candidates": [_candidate("CVE-2026-0001")]}, CIMultiDict()
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    out = tmp_path / "out.csv"
+    code = asyncio.run(puncia_main.main(
+        ["nuclei", "candidates", str(out), "--api-key", "ARPS-x", "--quiet",
+         "--filter", "platform=wordpress"]))
+    assert code == 0
+    assert out.read_text().startswith("cve,")
+    assert capsys.readouterr().out.startswith("cve,")
+
+
+def test_cli_rejects_a_malformed_filter(capsys):
+    code = asyncio.run(puncia_main.main(["nuclei", "candidates", "--filter", "kev"]))
+    assert code == 1
+    assert "KEY=VALUE" in capsys.readouterr().err
+
+
+def test_cli_never_echoes_crawl_source_names(monkeypatch, capsys):
+    async def fake_fetch_all_pages(session, mode, query, match, scope, limit, headers, limiter,
+                                   retries, timeout, on_page=None, crawl=False, on_crawl=None):
+        on_crawl(CIMultiDict({"X-Crawl-Status": "partial", "X-Crawl-New-Count": "3",
+                              "X-Crawl-Pending": "source-a,source-b", "X-Crawl-Failed": "source-c"}))
+        return ["a.example.com"]
+
+    monkeypatch.setattr(puncia_main, "_fetch_all_pages", fake_fetch_all_pages)
+    code = asyncio.run(puncia_main.main(["subdomain", "example.com", "--crawl", "--api-key", "ARPS-x", "--quiet"]))
+    assert code == 0
+    captured = capsys.readouterr()
+    for name in ("source-a", "source-b", "source-c"):
+        assert name not in captured.err and name not in captured.out
+    assert "crawl: partial, 3 newly discovered" in captured.err
+    assert "more results still coming" in captured.err
