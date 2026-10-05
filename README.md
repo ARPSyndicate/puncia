@@ -17,7 +17,7 @@
 ```text
 $ puncia subdomain arpsyndicate.io
 ╭──────────────────────────────────────────────────────────────────────╮
-│ Panthera(P.)uncia v0.39                                              │
+│ Panthera(P.)uncia v0.40                                              │
 │ subdomain recon · brand impersonation · exploit intel · sbom analysis│
 │ A.R.P. Syndicate — https://www.arpsyndicate.io                       │
 ╰──────────────────────────────────────────────────────────────────────╯
@@ -133,19 +133,27 @@ banner, progress bars, warnings and errors all go to **stderr**, so
     - Optionally scope the keyword to a single domain with `--domain`:
       `puncia keyword blog --domain bandcamp.com`
 5.  Query Exploit & Vulnerability Identifiers (exploit)
-    - (FREE) Vulnerability & Exploit Identifers Watchlist (^WATCHLIST_IDES) - `puncia exploit ^WATCHLIST_IDES  <output-file>`
+    - (FREE) Watchlist (^WATCHLIST_IDES) — CVEs **trending** in the latest crawl plus CVEs that became **exploitable for the first time** in it; rebuilt every crawl - `puncia exploit ^WATCHLIST_IDES  <output-file>`
     - (FREE) Vulnerability & Exploit Identifers Watchlist with Descriptions (^WATCHLIST_INFO) - `puncia exploit ^WATCHLIST_INFO  <output-file>`
     - (FREE) Vulnerable Technologies Watchlist (^WATCHLIST_TECH) - `puncia exploit ^WATCHLIST_TECH  <output-file>`
     - (FREE) Aggregate vulnerability/exploit stats (^STATS) - `puncia exploit ^STATS  <output-file>`
     - (FREE) Service health (^HEALTH) - `puncia exploit ^HEALTH  <output-file>`
     - (FREEMIUM) [Supported Vulnerability Identifiers](https://github.com/ARPSyndicate/docs?tab=readme-ov-file#supported-vulnerability-identifiers) - `puncia exploit <eoidentifier> --match <substring|prefix|exact> <output-file>`
+    - Metasploit modules come back as their Rapid7 module page (`ruby` bucket).
+      A CVE id with a public PoC but **no published CVE record yet** (a reserved
+      id the PoC author published first) is returned with a description starting
+      `** UNPUBLISHED ** ` that summarises the evidence.
 6.  (FREEMIUM) Enrich CVE/GHSA Identifiers (enrich) - `puncia enrich <cve-id/ghsa-id> <output-file>`
     - `enrich=true` only takes effect for `CVE-`/`GHSA-` identifiers; it merges
       the full upstream advisory record with EPSS + VEDAS scoring.
 7.  (PAID) Non-CVE Identifiers by VEDAS group (noncve) - `puncia noncve <browser/china/russia/europe/exploitable> <output-file>`
 8.  (PAID) Nuclei Template Candidates (nuclei) - `puncia nuclei candidates <output-file>`
     - CVEs that have a VEDAS id and **no nuclei template yet** but look
-      templatable
+      templatable, highest priority first (`priority = feasibility × impact`).
+      Each row carries a suggested template shape (protocol, method — `active`,
+      `oast`, `version`, `fingerprint-first` — and whether it needs auth), PoC
+      sources, portable afrog/xray/jaeles/goby templates, test environments,
+      existing templates for the same product, and the reasons behind the score.
     - Every page is fetched and merged automatically; `--limit` sets the page
       size (max 1000) and `--offset` fetches exactly one page instead.
     - Narrow with repeatable `--filter KEY=VALUE`: `min_feasibility`, `vendor`,

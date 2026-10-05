@@ -635,7 +635,7 @@ async def _fetch_all_candidates(
 #: joined with ";" (reasons with " | ", since a reason may contain ";").
 NUCLEI_CSV_COLUMNS = (
     "cve", "vedas_id", "priority", "feasibility", "impact", "protocol", "method",
-    "authenticated", "product", "platform", "cwe", "cvss", "vedas", "epss", "kev",
+    "authenticated", "product", "platform", "cpe_missing", "cwe", "cvss", "vedas", "epss", "kev",
     "poc_sources", "portable_templates", "test_environments", "sibling_templates", "reasons",
 )
 #: A cell starting with one of these is evaluated as a formula by Excel /
