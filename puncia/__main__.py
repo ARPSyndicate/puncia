@@ -505,14 +505,19 @@ async def _fetch_all_pages(
 ) -> Any:
     """Walk every page of an authenticated Subdomain Center result and merge it.
 
-    Continuation is driven *only* by an explicit ``X-Truncated: true`` on the
-    response — never inferred from row counts. The pagination contract is
-    being rolled out server-side incrementally, so today's responses may
-    carry ``X-Result-Count`` without ``X-Truncated``/``X-Next-Offset`` yet (or
-    report ``X-Truncated: false`` unconditionally); either way, treating "no
-    explicit continue signal" as "this is everything" means this function is
-    a correct single-page fetch today and starts walking automatically the
-    moment the server finishes shipping the feature — no client change needed.
+    Continuation: when the server sends an explicit ``X-Truncated`` it is
+    trusted exactly — ``true`` means another page follows, ``false`` means
+    this is the last. When the header is *absent*, continuation falls back
+    to page fullness: a page that returned as many rows as the page size we
+    asked for is almost certainly not the last, so the walk continues; a
+    short or empty page ends it. Earlier this function required an explicit
+    ``X-Truncated: true`` and treated "no header" as "this is everything",
+    which made it a single-page fetch against today's server (the header is
+    still being rolled out) — so an uncapped result was capped at one server
+    page, ~200k rows, no matter how many hosts existed. When the server
+    finishes shipping ``X-Truncated``/``X-Next-Offset`` this keeps working
+    unchanged: an explicit signal always wins over the fullness heuristic,
+    and the walk advances by the offset the server hands back.
 
     ``crawl`` is only ever sent on the first page — live-crawl results are
     additive on top of the normal paginated set, and a domain is only
@@ -553,8 +558,28 @@ async def _fetch_all_pages(
         if on_page is not None:
             on_page(page_number, len(merged))
 
+        # Decide whether to fetch another page.
+        #
+        # When the server gives an explicit X-Truncated, trust it exactly:
+        # "true" means more, "false" means done. When it does NOT send the
+        # header at all — which is where Subdomain Center is today for most
+        # endpoints — fall back to page fullness: a page that came back with
+        # as many rows as the page size we requested almost certainly isn't
+        # the last one, so keep going; a short or empty page ends the walk.
+        #
+        # This is the fix for the silent cap: relying on X-Truncated alone
+        # stopped the walk at the first page whenever the header was absent,
+        # so an uncapped result was truncated to one server page (~200k rows)
+        # no matter how many hosts existed. A final exactly-full page costs
+        # one extra empty fetch — cheap next to under-reporting a six-figure
+        # result.
         truncated_header = resp_headers.get("X-Truncated")
-        if truncated_header is None or not _truthy_header(truncated_header) or not data:
+        full_page = page_limit is not None and len(data) >= page_limit
+        if truncated_header is not None:
+            has_more = bool(data) and _truthy_header(truncated_header)
+        else:
+            has_more = bool(data) and full_page
+        if not has_more:
             break
 
         next_offset_header = resp_headers.get("X-Next-Offset")
@@ -634,9 +659,10 @@ async def _fetch_all_candidates(
 #: Column order for `puncia nuclei candidates --format csv`. List fields are
 #: joined with ";" (reasons with " | ", since a reason may contain ";").
 NUCLEI_CSV_COLUMNS = (
-    "cve", "vedas_id", "priority", "feasibility", "impact", "protocol", "method",
-    "authenticated", "product", "platform", "cpe_missing", "cwe", "cvss", "vedas", "epss", "kev",
-    "poc_sources", "portable_templates", "test_environments", "sibling_templates", "reasons",
+    "cve", "vedas_id", "priority", "feasibility", "impact", "recency_weight", "buildability",
+    "protocol", "method", "authenticated", "product", "platform", "cpe_missing", "cwe", "cvss",
+    "vedas", "epss", "kev", "poc_strong", "poc_sources", "weak_sources",
+    "portable_templates", "test_environments", "sibling_templates", "reasons",
 )
 #: A cell starting with one of these is evaluated as a formula by Excel /
 #: Sheets / LibreOffice. Candidate rows carry scraped strings (product names,
