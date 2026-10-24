@@ -12,12 +12,12 @@
 **Puncia** is the official command-line client for two A.R.P. Syndicate intelligence APIs — point it at a domain, a brand, or a vulnerability ID and get structured JSON back in seconds, no browser required:
 
 - 🕸️ **[Subdomain Center](https://subdomain.center)** — subdomain enumeration, **subdomain takeover** surfacing, **shadow IT discovery**, and **brand impersonation / lookalike-domain (typosquat) detection** at internet scale.
-- 💥 **[Exploit Observer](https://exploit.observer)** — exploit & vulnerability intelligence across 150+ identifier schemes (CVE, GHSA, EDB, MSF, ZDI, nation-state feeds and more), with CVE/GHSA enrichment (EPSS + VEDAS maturity scoring) and SBOM scanning.
+- 💥 **[Exploit Observer](https://exploit.observer)** — exploit & vulnerability intelligence across 150+ identifier schemes (CVE, GHSA, EDB, MSF, ZDI, nation-state feeds and more), with EPSS + VEDAS maturity scoring on every lookup and SBOM scanning.
 
 ```text
 $ puncia subdomain arpsyndicate.io
 ╭──────────────────────────────────────────────────────────────────────╮
-│ Panthera(P.)uncia v0.41                                              │
+│ Panthera(P.)uncia v0.42                                              │
 │ subdomain recon · brand impersonation · exploit intel · sbom analysis│
 │ A.R.P. Syndicate — https://www.arpsyndicate.io                       │
 ╰──────────────────────────────────────────────────────────────────────╯
@@ -46,8 +46,8 @@ puncia ━━━━━━━━━━━━━━━━━━━━━━━━�
    Enumerate the full subdomain footprint of a target, a key first step in spotting dangling/takeover-prone records.
 4. **Advanced Vulnerability Research & Monitoring**  
    Discover and track known and emerging threats, including obscure or unlisted vulnerabilities.
-5. **Contextual Enrichment of CVE/GHSA Data**  
-   Add depth and actionable intelligence (EPSS + VEDAS maturity scores) to known vulnerabilities for better prioritization.
+5. **Scored CVE/GHSA Intelligence**  
+   Every lookup carries EPSS + VEDAS maturity scores and CVSS, so known vulnerabilities can be prioritized in context.
 6. **Vulnerability Detection in Software Bill of Materials (SBOM)**  
    Analyze software components for known exploits and security issues using structured SBOM data.
 7. **Seamless Integration with CI/CD & Threat Intel Workflows**  
@@ -108,13 +108,18 @@ banner, progress bars, warnings and errors all go to **stderr**, so
 2.  (FREEMIUM) Query Domains, clustered by domain (subdomain / `cuttlefish` engine) - `puncia subdomain <domain> <output-file>`
     - **Pagination (authenticated only):** an authenticated result has no total
       cap. By default `subdomain`/`replica`/`keyword` walk every page and merge
-      them for you. Pass `--offset` (with or without `--limit`) to fetch exactly
-      one raw page yourself instead, e.g. for a resumable or streaming walk:
+      them for you, de-duplicating across pages; `--limit` (1–1,000,000) sets
+      the page size, otherwise the API's default of 200,000 is used explicitly
+      on every page. Pass `--offset` to fetch exactly one raw page yourself
+      instead, e.g. for a resumable or streaming walk:
       ```bash
       puncia subdomain bigco.com --limit 50000 --offset 0
-      # stderr prints: note: more results available — continue with --offset 50000
+      # stderr prints: note: more results available — continue with --offset 50000 --limit 50000
       puncia subdomain bigco.com --limit 50000 --offset 50000
       ```
+      The hint advances by the rows the page actually returned, so consecutive
+      manual pages may overlap by a few rows — de-duplicate when you
+      concatenate them.
       Anonymous requests ignore `--limit`/`--offset` server-side (always a
       shuffled sample of up to 500 rows); puncia warns rather than pretending
       they did something.
@@ -143,31 +148,33 @@ banner, progress bars, warnings and errors all go to **stderr**, so
       A CVE id with a public PoC but **no published CVE record yet** (a reserved
       id the PoC author published first) is returned with a description starting
       `** UNPUBLISHED ** ` that summarises the evidence.
-6.  (FREEMIUM) Enrich CVE/GHSA Identifiers (enrich) - `puncia enrich <cve-id/ghsa-id> <output-file>`
-    - `enrich=true` only takes effect for `CVE-`/`GHSA-` identifiers; it merges
-      the full upstream advisory record with EPSS + VEDAS scoring.
-7.  (PAID) Non-CVE Identifiers by VEDAS group (noncve) - `puncia noncve <browser/china/russia/europe/exploitable> <output-file>`
-8.  (PAID) Nuclei Template Candidates (nuclei) - `puncia nuclei candidates <output-file>`
+6.  (PAID) Non-CVE Identifiers by VEDAS group (noncve) - `puncia noncve <browser/china/russia/europe/exploitable> <output-file>`
+7.  (PAID) Nuclei Template Candidates (nuclei) - `puncia nuclei candidates <output-file>`
     - CVEs that have a VEDAS id and **no nuclei template yet** but look
       templatable, highest priority first (`priority = feasibility × impact`).
       Each row carries a suggested template shape (protocol, method — `active`,
-      `oast`, `version`, `fingerprint-first` — and whether it needs auth), PoC
-      sources, portable afrog/xray/jaeles/goby templates, test environments,
-      existing templates for the same product, and the reasons behind the score.
+      `oast`, `version`, `fingerprint-first` — whether it needs auth, whether
+      it is likely reachable over HTTP, its surface, whether it is a read or a
+      state change, and the XSS kind), the package ecosystem, PoC sources,
+      portable afrog/xray/jaeles/goby templates, test environments, existing
+      templates for the same product, and the reasons behind the score.
     - Every page is fetched and merged automatically; `--limit` sets the page
-      size (max 1000) and `--offset` fetches exactly one page instead.
+      size (max 1000) and `--offset` fetches exactly one page instead (stderr
+      then says how far through the ranking you are and how to continue).
     - Narrow with repeatable `--filter KEY=VALUE`: `min_feasibility`, `vendor`,
       `product`, `platform`, `cwe`, `method`, `protocol`, `kev`, `poc`, `portable`.
     - **CSV export:** `--format csv`, or just give an output path ending in `.csv`
-      — one row per CVE, list fields joined with `;` (reasons with ` | `), and
-      cells that a spreadsheet would treat as a formula are made inert.
+      — one row per CVE with the `shape` object flattened into its own columns
+      (`protocol`, `method`, `authenticated`, `likely_http`, `surface`,
+      `state_change`, `xss_kind`), list fields joined with `;` (reasons with
+      ` | `), and cells that a spreadsheet would treat as a formula made inert.
       ```bash
       puncia nuclei candidates candidates.csv
       puncia nuclei candidates wp.csv --filter platform=wordpress --filter poc=true
       puncia nuclei candidates --filter kev=true --filter min_feasibility=0.5 --format csv > kev.csv
       ```
-9.  (FREE) Subdomain Center service health (^HEALTH) - `puncia subdomain ^HEALTH <output-file>`
-10. Multiple Queries (bulk/sbom)
+8.  (FREE) Subdomain Center service health (^HEALTH) - `puncia subdomain ^HEALTH <output-file>`
+9.  Multiple Queries (bulk/sbom)
 
     - (FREEMIUM) Bulk Input JSON File Format - `puncia bulk <json-file> <output-directory>`
       ```json
@@ -187,10 +194,6 @@ banner, progress bars, warnings and errors all go to **stderr**, so
           "exploit": [
               "eoidentifierA",
               "eoidentifierB"
-          ],
-          "enrich": [
-              "eoidentifierA",
-              "eoidentifierB"
           ]
       }
       ```
@@ -198,9 +201,15 @@ banner, progress bars, warnings and errors all go to **stderr**, so
 
     Bulk and SBOM runs de-duplicate queries, cap parallelism at `--concurrency`
     (default 10), and — when no API key is present — pace requests to stay inside
-    the free-tier budget automatically.
+    the free-tier budget automatically. Each result lands at
+    `<output-directory>/<mode>/<query>.json`; a query that is not usable as a
+    filename as-is (path separators, control characters, a Windows device name,
+    over 200 characters, or a case-variant of another query) is scrubbed and gets
+    a short `~<hash>` suffix so two queries can never share one file. A run that
+    finds no valid query at all exits `1`; one with failed queries also exits `1`
+    after writing every other result and listing the failures on stderr.
 
-11. (FREEMIUM) External Import
+10. (FREEMIUM) External Import
 
    ```python
    import asyncio
@@ -216,7 +225,6 @@ banner, progress bars, warnings and errors all go to **stderr**, so
       api_key = await puncia.read_key()
       print(await puncia.query_api("subdomain", "arpsyndicate.io", apikey=api_key))
       print(await puncia.query_api("replica", "arpsyndicate.io", match="exact", apikey=api_key))
-      print(await puncia.query_api("enrich", "CVE-2021-3450", apikey=api_key))
       print(await puncia.query_api("noncve", "exploitable", apikey=api_key))
 
       # Nuclei template candidates: filtered, every page merged, saved as CSV
@@ -243,8 +251,11 @@ banner, progress bars, warnings and errors all go to **stderr**, so
    ```
 
    Failures raise `puncia.PunciaError`; an empty result (`{}` / `[]`) is returned
-   as-is rather than being treated as an error. Reuse one session across many
-   queries by passing `session=` and a shared `limiter=`, exactly as
+   as-is rather than being treated as an error. Anonymous calls share one
+   process-wide free-tier limiter per API, so a loop over `query_api` is paced
+   correctly without any extra plumbing; reuse one session across many queries
+   by passing `session=` (the `timeout=` still applies per request), and pass
+   your own `limiter=` only if you need different pacing, exactly as
    `process_bulk()` does.
 
    ```python
@@ -264,22 +275,15 @@ banner, progress bars, warnings and errors all go to **stderr**, so
 git clone https://github.com/ARPSyndicate/puncia && cd puncia
 pip install --upgrade pip     # editable installs need pip >= 21.3
 pip install -e ".[dev]"
-pytest                        # 112 offline tests, no API calls or network access
+pytest                        # 154 offline tests, no API calls or network access
 ```
 
 The test suite is fully offline — it covers URL construction, output-path
-containment, SBOM parsing, bulk planning and ratelimiter timing without touching
-the network, so it is safe to run in any environment.
+containment, SBOM parsing, bulk planning, page walking, CLI hints and
+ratelimiter timing without touching the network, so it is safe to run in any
+environment.
 
 
-
-### CVE Enrichment 
-<img src="https://raw.githubusercontent.com/ARPSyndicate/puncia/master/cve-enrich-diff.png" width="1500px">
-<br>
-
-### GHSA Enrichment 
-<img src="https://raw.githubusercontent.com/ARPSyndicate/puncia/master/ghsa-enrich-diff.png" width="1500px">
-<br>
 
 ## Noteworthy Mentions
 

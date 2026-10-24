@@ -3,7 +3,7 @@
 Thin, well-behaved client for two A.R.P. Syndicate APIs:
 
 * Subdomain Center  — subdomain enumeration, shadow IT, lookalike/typosquat domains
-* Exploit Observer  — vulnerability & exploit intelligence, CVE/GHSA enrichment, SBOM scanning
+* Exploit Observer  — vulnerability & exploit intelligence, SBOM scanning
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from aiofiles import open as aio_open
 from multidict import CIMultiDict
 from rich.console import Console
 from rich.json import JSON
+from rich.markup import escape
 from rich.panel import Panel
 from rich.progress import (
     BarColumn,
@@ -52,12 +53,8 @@ EXPLOIT_API = "https://api.exploit.observer/"
 SUBDOMAIN_HOST = "subdomain.center"
 EXPLOIT_HOST = "exploit.observer"
 
-#: Minimum seconds between unauthenticated requests, per host. Authenticated
-#: keys have no ratelimit, so these are only applied when no key is present.
-#: Documented anonymous limits: subdomain.center 5 req/min (>=12s apart),
-#: exploit.observer 2 req/min (>=30s apart); both padded for safety margin.
-#: Static endpoints (health/stats/watchlists) are documented as unlimited at
-#: both tiers and are exempted from this entirely — see `_is_static_query`.
+#: Minimum seconds between unauthenticated requests, per host. Not applied
+#: when an API key is present, nor to static pseudo-queries (`_is_static_query`).
 FREE_TIER_INTERVAL = {SUBDOMAIN_HOST: 13.0, EXPLOIT_HOST: 31.0}
 
 DEFAULT_TIMEOUT = 60.0
@@ -65,14 +62,32 @@ DEFAULT_RETRIES = 2
 DEFAULT_CONCURRENCY = 10
 BACKOFF_BASE = 2.0
 
-#: Hard ceiling on pages walked for one query, purely so a server that never
-#: reports "X-Truncated: false" (or an offset that stops advancing) can't
-#: hang the CLI forever. High enough to be a non-issue for any real dataset.
+#: Hard ceiling on pages walked for one query, so a walk that never sees a
+#: stop signal (or whose offset stops advancing) cannot run forever.
 MAX_PAGES = 10_000
+
+#: Page size the automatic Subdomain Center walk sends when the caller gives
+#: no ``limit``, so every request of a walk carries the same explicit page
+#: size; and the largest ``limit`` puncia accepts for those modes.
+SUBDOMAIN_DEFAULT_PAGE = 200_000
+SUBDOMAIN_MAX_PAGE = 1_000_000
+
+#: A page within this fraction of the requested page size counts as *full*
+#: and is walked past whether or not the response flags more results; only a
+#: clearly short page, or an empty one, ends a walk on its own.
+PAGE_FULL_TOLERANCE = 0.10
+
+#: Above this many bytes of rendered JSON, stdout output skips rich's syntax
+#: highlighting even on a terminal: the highlighter re-parses and regex-scans
+#: the whole document, which turns a 200k-row result into a multi-second
+#: stall for no benefit (nobody reads 10 MB of coloured JSON by eye).
+RICH_JSON_MAX_BYTES = 2_000_000
 
 #: Characters that could escape a path segment. Any query that becomes a
 #: filename (SBOM component names, bulk input) is scrubbed of these first.
 UNSAFE_PATH_CHARS = re.compile(r"[\\/:\x00-\x1f\x7f]")
+#: Names Windows reserves for devices; `CON.json` is still the console there.
+WINDOWS_RESERVED_NAMES = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])$", re.IGNORECASE)
 #: Leave room for the ".json" suffix and a disambiguating hash under NAME_MAX.
 MAX_FILENAME_STEM = 200
 
@@ -89,20 +104,18 @@ class Mode:
     host: str
     param: str = ""  # query-string parameter carrying the user's value
     engine: str = ""  # Subdomain Center clustering engine
-    extra: tuple = ()  # additional fixed query parameters
     matches: tuple = ()  # permitted `match` values ( () == unsupported )
     values: tuple = ()  # permitted values for path-based modes
     scope_param: str = ""  # optional secondary param narrowing the search
     paid: bool = False
-    crawl_capable: bool = False  # supports --crawl (cuttlefish engine only)
+    crawl_capable: bool = False  # supports --crawl
     filters: tuple = ()  # permitted --filter keys ( () == unsupported )
-    pageable: bool = False  # Exploit Observer endpoint taking limit/offset
+    pageable: bool = False  # paged with limit/offset, continuation read from the body
     help: str = ""
 
 
-#: Filters `/nuclei/candidates` accepts. Values are validated server-side (a
-#: bad one is a 400 with a message); only the key is checked here, so a typo
-#: in a key fails fast instead of being silently ignored by the server.
+#: Filter keys `nuclei candidates` accepts. Only the key is checked
+#: client-side, so a typo in a key fails fast; values are passed through.
 NUCLEI_FILTERS = (
     "min_feasibility", "vendor", "product", "platform", "cwe", "method",
     "protocol", "kev", "poc", "portable",
@@ -141,14 +154,6 @@ MODES: dict[str, Mode] = {
         param="keyword",
         matches=("substring", "prefix", "exact"),
         help="vulnerability/exploit intelligence for an identifier or product",
-    ),
-    "enrich": Mode(
-        EXPLOIT_API,
-        EXPLOIT_HOST,
-        param="keyword",
-        extra=(("enrich", "True"),),
-        matches=("substring", "prefix", "exact"),
-        help="as `exploit`, plus EPSS/VEDAS scores and correlated references",
     ),
     "noncve": Mode(
         EXPLOIT_API + "noncve/",
@@ -227,10 +232,8 @@ async def read_key() -> str:
 # Request building (pure, and therefore easy to test)
 # --------------------------------------------------------------------------- #
 
-#: Exploit Observer caps `keyword` at 2048 characters and, unlike every other
-#: validation failure on that endpoint, does not error on an oversized one —
-#: it just returns `[]`. Rejecting it client-side turns that into a clear
-#: error instead of a silent empty result.
+#: Longest keyword accepted for the `exploit` mode; a longer one is rejected
+#: client-side with a clear error.
 MAX_KEYWORD_LENGTH = 2048
 
 
@@ -249,9 +252,9 @@ def build_request(
     ``scope`` narrows a keyword search to one domain (Subdomain Center's
     ammonites engine accepts ``keyword`` and ``domain`` together). ``limit``
     and ``offset`` page through an authenticated Subdomain Center result.
-    ``crawl`` supplements a `subdomain` (cuttlefish) query with a live
-    discovery pass. Of Exploit Observer's endpoints only `nuclei` pages
-    (``limit``/``offset``) and takes ``filters``.
+    ``crawl`` supplements a `subdomain` query with a live discovery pass. Of
+    the Exploit Observer modes only `nuclei` pages (``limit``/``offset``) and
+    takes ``filters``.
 
     Raises :class:`PunciaError` if the mode is unknown or the arguments are not
     valid for it. Kept free of I/O so the URL contract can be unit-tested —
@@ -276,35 +279,41 @@ def build_request(
             )
     if spec.pageable and limit is not None and not 1 <= limit <= NUCLEI_MAX_PAGE:
         raise PunciaError(f"--limit for mode {mode!r} must be between 1 and {NUCLEI_MAX_PAGE}")
-    if limit is not None and limit < 0:
-        raise PunciaError(f"--limit must be >= 0, got {limit}")
+    # A page size of 0 would make every page look "full" to the walk.
+    if limit is not None and limit < 1:
+        raise PunciaError(f"--limit must be >= 1, got {limit}")
+    if limit is not None and spec.host == SUBDOMAIN_HOST and limit > SUBDOMAIN_MAX_PAGE:
+        raise PunciaError(
+            f"--limit must be <= {SUBDOMAIN_MAX_PAGE} for mode {mode!r} "
+            f"(Subdomain Center's absolute page-size bound), got {limit}"
+        )
     if offset is not None and offset < 0:
         raise PunciaError(f"--offset must be >= 0, got {offset}")
     if offset is not None and offset > 0 and limit is None and not spec.pageable:
         raise PunciaError(
-            "--offset > 0 requires --limit too — pagination is stateless "
-            "server-side, so the page size used on an earlier page must be "
-            "repeated on every later one, or the API returns 400"
+            "--offset > 0 requires --limit too: repeat the page size used on the earlier page"
         )
     if crawl and not spec.crawl_capable:
         raise PunciaError(f"mode {mode!r} does not support --crawl (only `subdomain` does)")
+    if scope and not spec.scope_param:
+        raise PunciaError(f"mode {mode!r} does not support --domain")
 
     # `query|match` is the legacy inline spelling of `--match`.
+    query = query.strip()
     if "|" in query and spec.matches:
         query, _, inline_match = query.partition("|")
+        query, inline_match = query.strip(), inline_match.strip()
         match = match or inline_match
 
     if _is_static_query(mode, query):
         return STATIC_ENDPOINTS[(mode, query)]
 
-    query = query.strip()
     if not query:
         raise PunciaError(f"mode {mode!r} requires a non-empty query")
 
-    if mode in ("exploit", "enrich") and len(query) > MAX_KEYWORD_LENGTH:
+    if mode == "exploit" and len(query) > MAX_KEYWORD_LENGTH:
         raise PunciaError(
-            f"keyword is {len(query)} chars, over Exploit Observer's "
-            f"{MAX_KEYWORD_LENGTH}-char limit (it would silently return [] instead of erroring)"
+            f"keyword is {len(query)} chars, over Exploit Observer's {MAX_KEYWORD_LENGTH}-char limit"
         )
 
     if match:
@@ -330,10 +339,7 @@ def build_request(
             page_params["offset"] = str(offset)
         return url + ("?" + urlencode(page_params) if page_params else "")
 
-    if scope and not spec.scope_param:
-        raise PunciaError(f"mode {mode!r} does not support --domain")
-
-    params: dict[str, str] = dict(spec.extra)
+    params: dict[str, str] = {}
     if spec.engine:
         params["engine"] = spec.engine
     params[spec.param] = query
@@ -391,6 +397,11 @@ def make_limiters(apikey: str = "") -> dict[str, RateLimiter]:
     return {host: RateLimiter(gap) for host, gap in FREE_TIER_INTERVAL.items()}
 
 
+#: Process-wide limiters used by anonymous `query_api` calls that don't bring
+#: their own, so consecutive calls from one process are paced together.
+_DEFAULT_LIMITERS: dict[str, RateLimiter] = make_limiters("")
+
+
 @asynccontextmanager
 async def _session_scope(session: Optional[aiohttp.ClientSession], timeout: float):
     """Yield the caller's session untouched, or manage a short-lived one."""
@@ -435,11 +446,14 @@ async def _fetch(
     timeout: float,
 ) -> tuple:
     """GET ``url`` and return ``(decoded_json, response_headers)``, retrying
-    transient failures. ``response_headers`` is a case-insensitive mapping
-    (servers routinely send ``x-truncated`` over HTTP/2 rather than
-    ``X-Truncated``; a plain ``dict`` would silently break every header
-    lookup in this module), safe to use after the connection closes."""
+    transient failures. ``response_headers`` is a case-insensitive mapping,
+    so header lookups work whatever casing the response used, and is safe to
+    use after the connection closes.
+
+    ``timeout`` is applied per request, so it holds even when the caller
+    supplied its own ``session`` built with a different (or no) timeout."""
     last_error: Optional[PunciaError] = None
+    request_timeout = aiohttp.ClientTimeout(total=timeout)
 
     for attempt in range(retries + 1):
         if limiter is not None:
@@ -447,7 +461,7 @@ async def _fetch(
         status: Optional[int] = None
         retry_after: Optional[str] = None
         try:
-            async with session.get(url, headers=headers) as response:
+            async with session.get(url, headers=headers, timeout=request_timeout) as response:
                 status = response.status
                 if status == 200:
                     try:
@@ -471,7 +485,7 @@ async def _fetch(
                 raise PunciaError(f"not found (HTTP 404): {url}")
             message = _extract_error_message(body_text) or body_text[:200]
             last_error = PunciaError(f"HTTP {status}{': ' + message if message else ''}")
-            # Only ratelimits and server faults are worth another attempt.
+            # Only 429 and 5xx are worth another attempt.
             if status != 429 and not 500 <= status < 600:
                 raise last_error
 
@@ -486,6 +500,15 @@ async def _fetch(
 
 def _truthy_header(value: Optional[str]) -> bool:
     return (value or "").strip().lower() in ("1", "true", "yes")
+
+
+def _page_looks_full(rows: int, page_limit: Optional[int]) -> bool:
+    """True when a page came back (nearly) as long as the page size requested.
+
+    Such a page is walked past regardless of the truncation header; see
+    :data:`PAGE_FULL_TOLERANCE`.
+    """
+    return page_limit is not None and rows >= page_limit * (1 - PAGE_FULL_TOLERANCE)
 
 
 async def _fetch_all_pages(
@@ -505,36 +528,24 @@ async def _fetch_all_pages(
 ) -> Any:
     """Walk every page of an authenticated Subdomain Center result and merge it.
 
-    Continuation: when the server sends an explicit ``X-Truncated`` it is
-    trusted exactly — ``true`` means another page follows, ``false`` means
-    this is the last. When the header is *absent*, continuation falls back
-    to page fullness: a page that returned as many rows as the page size we
-    asked for is almost certainly not the last, so the walk continues; a
-    short or empty page ends it. Earlier this function required an explicit
-    ``X-Truncated: true`` and treated "no header" as "this is everything",
-    which made it a single-page fetch against today's server (the header is
-    still being rolled out) — so an uncapped result was capped at one server
-    page, ~200k rows, no matter how many hosts existed. When the server
-    finishes shipping ``X-Truncated``/``X-Next-Offset`` this keeps working
-    unchanged: an explicit signal always wins over the fullness heuristic,
-    and the walk advances by the offset the server hands back.
+    Continuation: ``X-Truncated: true`` always means another page follows.
+    Otherwise the walk continues only past a page that came back (nearly) as
+    long as the page size requested; a clearly short page, or an empty one,
+    ends it (see :data:`PAGE_FULL_TOLERANCE`).
 
-    ``crawl`` is only ever sent on the first page — live-crawl results are
-    additive on top of the normal paginated set, and a domain is only
-    actually re-crawled once every ~6h regardless, so repeating it on every
-    page would just be a wasted round-trip.
+    The next offset is ``X-Next-Offset`` when present, else the current
+    offset advanced by the rows served (the larger of the row count and
+    ``X-Result-Count``) — never by the page size, so a walk can overlap but
+    never skip. Rows are de-duplicated client-side, first-seen order kept,
+    so an overlapping window cannot inflate the result.
 
-    Pagination is stateless server-side: ``offset > 0`` with no ``limit=``
-    is now a `400` (the server won't remember page one's page size), so
-    every page after the first must repeat whatever page size page one
-    actually used. If the caller didn't pass ``limit`` explicitly, that
-    size is only known once page one's response comes back (it's the
-    server's own default), so it's captured then and pinned for every
-    later page in the walk.
+    ``crawl`` is only sent on the first page. Every page carries an explicit
+    ``limit``: the caller's, or :data:`SUBDOMAIN_DEFAULT_PAGE` when none was
+    given, so the page size is the same on every request of the walk.
     """
     merged: list = []
     offset = 0
-    page_limit = limit
+    page_limit = limit if limit is not None else SUBDOMAIN_DEFAULT_PAGE
 
     for page_number in range(1, MAX_PAGES + 1):
         page_crawl = crawl and page_number == 1
@@ -551,51 +562,35 @@ async def _fetch_all_pages(
                 f"(offset={offset}); resume manually with --offset {offset} --limit {page_limit}"
             )
 
-        if page_number == 1 and page_limit is None:
-            page_limit = len(data) or None
-
         merged.extend(data)
         if on_page is not None:
             on_page(page_number, len(merged))
 
-        # Decide whether to fetch another page.
-        #
-        # When the server gives an explicit X-Truncated, trust it exactly:
-        # "true" means more, "false" means done. When it does NOT send the
-        # header at all — which is where Subdomain Center is today for most
-        # endpoints — fall back to page fullness: a page that came back with
-        # as many rows as the page size we requested almost certainly isn't
-        # the last one, so keep going; a short or empty page ends the walk.
-        #
-        # This is the fix for the silent cap: relying on X-Truncated alone
-        # stopped the walk at the first page whenever the header was absent,
-        # so an uncapped result was truncated to one server page (~200k rows)
-        # no matter how many hosts existed. A final exactly-full page costs
-        # one extra empty fetch — cheap next to under-reporting a six-figure
-        # result.
+        # "X-Truncated: true" is authoritative; otherwise only a (nearly) full
+        # page is walked past, and an empty page always ends the walk.
         truncated_header = resp_headers.get("X-Truncated")
-        full_page = page_limit is not None and len(data) >= page_limit
-        if truncated_header is not None:
-            has_more = bool(data) and _truthy_header(truncated_header)
-        else:
-            has_more = bool(data) and full_page
+        has_more = bool(data) and (
+            _truthy_header(truncated_header) or _page_looks_full(len(data), page_limit)
+        )
         if not has_more:
             break
 
+        next_offset = None
         next_offset_header = resp_headers.get("X-Next-Offset")
         if next_offset_header is not None:
             try:
                 next_offset = int(next_offset_header)
             except ValueError:
-                next_offset = offset + len(data)
-        else:
-            result_count = resp_headers.get("X-Result-Count")
+                next_offset = None
+        if next_offset is None:
+            # No usable X-Next-Offset: advance by the rows served.
             try:
-                next_offset = offset + (int(result_count) if result_count is not None else len(data))
+                result_count = int(resp_headers.get("X-Result-Count") or 0)
             except ValueError:
-                next_offset = offset + len(data)
+                result_count = 0
+            next_offset = offset + max(len(data), result_count)
 
-        if next_offset <= offset:  # guard against a non-advancing/misbehaving server
+        if next_offset <= offset:  # guard against a non-advancing offset
             break
         offset = next_offset
     else:
@@ -604,6 +599,12 @@ async def _fetch_all_pages(
             f"pass --offset {offset} --limit {page_limit} to continue manually"
         )
 
+    # Overlapping windows can hand the same row back twice; collapse repeats,
+    # keeping first-seen order.
+    try:
+        merged = list(dict.fromkeys(merged))
+    except TypeError:  # unhashable rows (dict payloads) — leave as-is
+        pass
     return merged
 
 
@@ -619,11 +620,11 @@ async def _fetch_all_candidates(
     timeout: float,
     on_page: Optional[Callable[[int, int], None]] = None,
 ) -> Any:
-    """Walk every page of `/nuclei/candidates` and merge them into one
+    """Walk every page of `nuclei candidates` and merge them into one
     ``{"generated", "total", "offset": 0, "limit", "candidates"}`` body.
 
-    Its paging lives in the body (``total``), not in headers like Subdomain
-    Center's. A ``{}`` first page (no/invalid key) is returned as-is.
+    Continuation is read from the body's ``total``. A first page without a
+    ``candidates`` list is returned as-is.
     """
     page_size = limit or NUCLEI_MAX_PAGE
     merged: list = []
@@ -658,15 +659,16 @@ async def _fetch_all_candidates(
 
 #: Column order for `puncia nuclei candidates --format csv`. List fields are
 #: joined with ";" (reasons with " | ", since a reason may contain ";").
+#: ``protocol`` through ``xss_kind`` are the row's ``shape`` object flattened.
 NUCLEI_CSV_COLUMNS = (
     "cve", "vedas_id", "priority", "feasibility", "impact", "recency_weight", "buildability",
-    "protocol", "method", "authenticated", "product", "platform", "cpe_missing", "cwe", "cvss",
+    "protocol", "method", "authenticated", "likely_http", "surface", "state_change", "xss_kind",
+    "product", "ecosystem", "platform", "cpe_missing", "cwe", "cvss",
     "vedas", "epss", "kev", "poc_strong", "poc_sources", "weak_sources",
     "portable_templates", "test_environments", "sibling_templates", "reasons",
 )
 #: A cell starting with one of these is evaluated as a formula by Excel /
-#: Sheets / LibreOffice. Candidate rows carry scraped strings (product names,
-#: repo names), so each such cell is prefixed with "'" to keep it inert.
+#: Sheets / LibreOffice; each such cell is prefixed with "'" to keep it inert.
 _CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 
@@ -686,13 +688,17 @@ def candidates_to_csv(data: Any) -> str:
     as CSV, one row per CVE in ranked order. ``{}`` (no key) gives a
     header-only CSV."""
     rows = data.get("candidates", []) if isinstance(data, dict) else (data or [])
+    if not isinstance(rows, list):
+        rows = []
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
     writer.writerow(NUCLEI_CSV_COLUMNS)
     for row in rows:
-        shape = row.get("shape") or {}
-        flat = dict(row, protocol=shape.get("protocol"), method=shape.get("method"),
-                    authenticated=shape.get("authenticated"))
+        if not isinstance(row, dict):
+            continue
+        shape = row.get("shape")
+        # Flatten the shape object under the row; a row key wins on a clash.
+        flat = {**(shape if isinstance(shape, dict) else {}), **row}
         writer.writerow(
             _csv_cell(flat.get(col), " | " if col == "reasons" else ";")
             for col in NUCLEI_CSV_COLUMNS
@@ -701,8 +707,12 @@ def candidates_to_csv(data: Any) -> str:
 
 
 async def write_csv(path, data: Any) -> None:
-    async with aio_open(str(path), "w", newline="") as handle:
-        await handle.write(candidates_to_csv(data))
+    """Write ``data`` as CSV to ``path`` (UTF-8; product names are not ASCII)."""
+    try:
+        async with aio_open(str(path), "w", newline="", encoding="utf-8") as handle:
+            await handle.write(candidates_to_csv(data))
+    except OSError as exc:
+        raise PunciaError(f"cannot write {path}: {exc}") from exc
 
 
 def emit_result(data: Any) -> str:
@@ -714,7 +724,7 @@ def emit_result(data: Any) -> str:
     pipe or file. Highlighting is only ever applied for human viewing.
     """
     payload = json.dumps(data, indent=4, sort_keys=True)
-    if out_console.is_terminal:
+    if out_console.is_terminal and len(payload) <= RICH_JSON_MAX_BYTES:
         out_console.print(JSON(payload))
     else:
         sys.stdout.write(payload + "\n")
@@ -722,9 +732,16 @@ def emit_result(data: Any) -> str:
 
 
 async def write_json(path, data: Any) -> None:
-    """Serialise ``data`` to ``path`` in the project's canonical JSON layout."""
-    async with aio_open(str(path), "w") as handle:
-        await handle.write(json.dumps(data, indent=4, sort_keys=True))
+    """Serialise ``data`` to ``path`` in the project's canonical JSON layout.
+
+    Raises :class:`PunciaError` when the file cannot be written, so a bulk
+    run records it as that job's failure instead of aborting every job.
+    """
+    try:
+        async with aio_open(str(path), "w", encoding="utf-8") as handle:
+            await handle.write(json.dumps(data, indent=4, sort_keys=True))
+    except OSError as exc:
+        raise PunciaError(f"cannot write {path}: {exc}") from exc
 
 
 async def query_api(
@@ -752,13 +769,11 @@ async def query_api(
 
     For an authenticated Subdomain Center query (``subdomain``/``replica``/
     ``keyword``) with no explicit ``offset``, every page of the result is
-    walked and merged automatically — matching the API's "no total cap for
-    authenticated results" contract. Pass ``offset`` to fetch exactly one
+    walked and merged automatically. Pass ``offset`` to fetch exactly one
     page yourself instead; ``on_headers`` then receives that page's response
     headers (``X-Truncated``, ``X-Next-Offset``, ``X-Result-Count``) so you
-    know whether and how to continue. Pagination is stateless server-side,
-    so ``offset > 0`` also requires ``limit`` — repeat whatever page size an
-    earlier page used, or the API returns `400`. ``on_page`` is called after
+    know whether and how to continue. ``offset > 0`` also requires ``limit``
+    (repeat the page size the earlier page used). ``on_page`` is called after
     each page during an automatic walk as ``on_page(page_number, rows_so_far)``.
 
     ``crawl`` supplements a ``subdomain`` query with a live discovery pass
@@ -771,17 +786,20 @@ async def query_api(
     ``output_file`` as CSV (see :func:`candidates_to_csv`); the return value
     is always the decoded JSON.
 
-    Watchlist/health/stats pseudo-queries (``^WATCHLIST_TECH``, ``^HEALTH``,
-    ``^STATS``) are unlimited and unauthenticated regardless of ``apikey``,
-    so they skip both rate limiting and pagination.
+    Static pseudo-queries (``^WATCHLIST_TECH``, ``^HEALTH``, ``^STATS``) skip
+    both rate limiting and pagination regardless of ``apikey``.
 
     Raises :class:`PunciaError` on invalid input or an unrecoverable request
     failure. An empty result (``{}`` / ``[]``) is a legitimate answer and is
     returned, and written to ``output_file``, like any other.
     """
-    spec = MODES.get(mode)
-    if spec is None:
-        build_request(mode, query, match, scope, limit, offset, crawl)  # raises a clear message
+    query = query.strip()
+    # Validate the whole argument set once, up front, whichever fetch path is
+    # taken below: the page walkers rebuild URLs with only the arguments they
+    # use, so without this a `match` or `scope` passed to `nuclei` (or a
+    # `crawl` to `replica`) would be dropped silently instead of rejected.
+    build_request(mode, query, match, scope, limit, offset, crawl, filters)
+    spec = MODES[mode]
     if output_format not in ("json", "csv"):
         raise PunciaError(f"unknown output format {output_format!r} (expected json or csv)")
     if output_format == "csv" and mode != "nuclei":
@@ -792,7 +810,7 @@ async def query_api(
     is_static = _is_static_query(mode, query)
     headers = {"X-API-Key": apikey} if apikey else {}
     if limiter is None and not apikey and not is_static:
-        limiter = RateLimiter(FREE_TIER_INTERVAL.get(spec.host, 0.0))
+        limiter = _DEFAULT_LIMITERS.get(spec.host)
 
     auto_paginate = (
         spec.host == SUBDOMAIN_HOST and bool(apikey) and offset is None and not is_static
@@ -830,14 +848,23 @@ async def query_api(
 # --------------------------------------------------------------------------- #
 
 def sbom_process(sbom: dict) -> list:
-    """Extract ``name@version`` fingerprints from a CycloneDX document."""
+    """Extract ``name@version`` fingerprints from a CycloneDX document.
+
+    Anything that is not a JSON object (a bare list, a string) yields no
+    fingerprints rather than an ``AttributeError``.
+    """
     fingerprints: list = []
+    if not isinstance(sbom, dict):
+        return fingerprints
 
     def add_component(name, version) -> None:
         if isinstance(name, str) and isinstance(version, str) and name and version:
             fingerprints.append(f"{name}@{version}")
 
-    metadata_component = (sbom.get("metadata") or {}).get("component") or {}
+    metadata = sbom.get("metadata")
+    metadata_component = (metadata.get("component") if isinstance(metadata, dict) else None) or {}
+    if not isinstance(metadata_component, dict):
+        metadata_component = {}
     add_component(metadata_component.get("name"), metadata_component.get("version"))
     for component in sbom.get("components") or []:
         if isinstance(component, dict):
@@ -845,7 +872,9 @@ def sbom_process(sbom: dict) -> list:
     return fingerprints
 
 
-def safe_output_path(root: Path, mode: str, query: str) -> Optional[Path]:
+def safe_output_path(
+    root: Path, mode: str, query: str, disambiguate: bool = False
+) -> Optional[Path]:
     """Resolve the output path for a (mode, query) pair, confined to ``root``.
 
     ``query`` routinely comes from third-party input — an SBOM authored by
@@ -853,13 +882,22 @@ def safe_output_path(root: Path, mode: str, query: str) -> Optional[Path]:
     characters are scrubbed before the value is ever used as a filename, and
     the resolved path is re-checked against ``root`` regardless. Returns
     ``None`` when no safe path can be derived.
+
+    A name that had to be altered (scrubbed, truncated, or a Windows device
+    name) gets a short hash of the *original* query appended so two distinct
+    queries that scrub to the same text (``a/b@1`` and ``a:b@1``) cannot
+    silently overwrite each other's result; ``disambiguate`` forces the
+    suffix for a name the caller already knows collides with another.
     """
     stem = UNSAFE_PATH_CHARS.sub("_", query).strip(". ")
     if not stem:
         return None
+    altered = stem != query or bool(WINDOWS_RESERVED_NAMES.match(stem))
     if len(stem) > MAX_FILENAME_STEM:  # stay under NAME_MAX, keep it unique
+        stem, altered = stem[:MAX_FILENAME_STEM], True
+    if altered or disambiguate:
         digest = hashlib.sha256(query.encode("utf-8", "replace")).hexdigest()[:8]
-        stem = f"{stem[:MAX_FILENAME_STEM]}~{digest}"
+        stem = f"{stem}~{digest}"
 
     destination = (root / mode / f"{stem}.json").resolve()
     try:
@@ -877,6 +915,10 @@ def plan_bulk(input_file: dict, root: Path) -> tuple:
     jobs: list = []
     warnings: list = []
     seen: set = set()
+    # Destinations already claimed, compared case-insensitively: macOS and
+    # Windows filesystems would otherwise let `CVE-2021-1` and `cve-2021-1`
+    # (distinct queries to the client) overwrite each other's file.
+    taken: set = set()
 
     if not isinstance(input_file, dict):
         return [], ["input JSON must be an object mapping modes to query lists"]
@@ -892,13 +934,17 @@ def plan_bulk(input_file: dict, root: Path) -> tuple:
             if not isinstance(query, str) or not query.strip():
                 warnings.append(f"skipping non-string query in mode {mode!r}")
                 continue
+            query = query.strip()
             if (mode, query) in seen:
                 continue
             seen.add((mode, query))
             destination = safe_output_path(root, mode, query)
-            if destination is None:
+            if destination is not None and str(destination).lower() in taken:
+                destination = safe_output_path(root, mode, query, disambiguate=True)
+            if destination is None or str(destination).lower() in taken:
                 warnings.append(f"skipping unsafe output path for {mode}/{query!r}")
                 continue
+            taken.add(str(destination).lower())
             jobs.append((mode, query, destination))
     return jobs, warnings
 
@@ -924,17 +970,21 @@ async def process_bulk(
     that supports it); it's silently ignored for every other mode present.
 
     Returns the number of failed queries (0 meaning everything succeeded).
+    Raises :class:`PunciaError` when the input yields no valid query at all —
+    an input error, not a success with nothing to show for it.
     """
     root = Path(output_directory).resolve()
     jobs, warnings = plan_bulk(input_file, root)
     for warning in warnings:
-        err_console.print(f"[yellow]warning:[/yellow] {warning}")
+        err_console.print(f"[yellow]warning:[/yellow] {escape(warning)}")
     if not jobs:
-        err_console.print("[bold red]nothing to do:[/bold red] no valid queries found")
-        return 0
+        raise PunciaError("nothing to do: no valid queries found in the input")
 
-    for _, _, destination in jobs:
-        destination.parent.mkdir(parents=True, exist_ok=True)
+    for parent in {destination.parent for _, _, destination in jobs}:
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise PunciaError(f"cannot create output directory {parent}: {exc}") from exc
 
     limiters = make_limiters(apikey)
     semaphore = asyncio.Semaphore(max(1, concurrency))
@@ -982,11 +1032,16 @@ async def process_bulk(
 
             await asyncio.gather(*(run_job(m, q, d) for m, q, d in jobs))
 
+    # `escape`: queries and messages are untrusted text and may contain
+    # `[...]` that rich would otherwise parse as markup.
     for mode, query, message in failures:
-        err_console.print(f"[bold red]failed:[/bold red] {mode}/{query} — {message}")
+        err_console.print(
+            f"[bold red]failed:[/bold red] {escape(mode)}/{escape(query)} — {escape(message)}"
+        )
     succeeded = len(jobs) - len(failures)
     err_console.print(
-        f"[bold green]✓[/bold green] {succeeded}/{len(jobs)} queries written to [bold]{root}[/bold]"
+        f"[bold green]✓[/bold green] {succeeded}/{len(jobs)} queries written to "
+        f"[bold]{escape(str(root))}[/bold]"
     )
     return len(failures)
 
@@ -1010,7 +1065,6 @@ examples:
   puncia subdomain bandcamp.com --offset 0  one raw page (manual pagination)
   puncia subdomain example.com --crawl      supplement with a live crawl (needs a key)
   puncia exploit CVE-2021-44228             everything known about a CVE
-  puncia enrich GHSA-jfh8-c2jp-5v3q         the same, plus EPSS/VEDAS scoring
   puncia exploit ^WATCHLIST_TECH            currently vulnerable technologies
   puncia exploit ^STATS                     aggregate vulnerability/exploit counts
   puncia noncve exploitable out.json        non-CVE VEDAS groups (needs a key)
@@ -1034,9 +1088,8 @@ pagination (mode `subdomain`/`replica`/`keyword`, requires an API key):
   With no --offset, every page is walked and merged automatically — an
   authenticated result has no total cap, so this is the "get everything"
   default. Pass --offset to fetch exactly one raw page yourself instead,
-  e.g. for a resumable/streaming walk. Pagination is stateless server-side,
-  so any --offset above 0 also needs --limit, repeating whatever page size
-  an earlier page used — the API rejects offset>0 with no limit.
+  e.g. for a resumable/streaming walk. Any --offset above 0 also needs
+  --limit, repeating the page size an earlier page used.
 
 nuclei candidates (mode `nuclei`, query `candidates`, requires an API key):
   CVEs with a VEDAS id and no nuclei template, highest priority first.
@@ -1113,7 +1166,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--limit",
-        type=_non_negative_int,
+        type=_positive_int,
         default=None,
         metavar="N",
         help="page size for subdomain/replica/keyword (server default if omitted)",
@@ -1133,21 +1186,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--timeout",
-        type=float,
+        type=_positive_float,
         default=DEFAULT_TIMEOUT,
         metavar="SECONDS",
         help=f"per-request timeout (default: {DEFAULT_TIMEOUT:g})",
     )
     parser.add_argument(
         "--retries",
-        type=int,
+        type=_non_negative_int,
         default=DEFAULT_RETRIES,
         metavar="N",
         help=f"retries for timeouts, ratelimits and 5xx (default: {DEFAULT_RETRIES})",
     )
     parser.add_argument(
         "--concurrency",
-        type=int,
+        type=_positive_int,
         default=DEFAULT_CONCURRENCY,
         metavar="N",
         help=f"parallel requests in bulk/sbom modes (default: {DEFAULT_CONCURRENCY})",
@@ -1180,6 +1233,20 @@ def _non_negative_int(text: str) -> int:
     return value
 
 
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1, got {value}")
+    return value
+
+
+def _positive_float(text: str) -> float:
+    value = float(text)
+    if not value > 0:  # also rejects NaN
+        raise argparse.ArgumentTypeError(f"must be > 0, got {text}")
+    return value
+
+
 def _load_json_document(path: str) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as handle:
@@ -1204,15 +1271,31 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
     apikey = args.api_key.strip() or await read_key()
 
     if args.mode == "storekey":
+        if not args.query.strip():
+            raise PunciaError("storekey needs a non-empty API key")
         await store_key(args.query)
         err_console.print(
-            f"[bold green]✓[/bold green] key stored in [bold]{_key_path()}[/bold] (mode 0600)"
+            f"[bold green]✓[/bold green] key stored in [bold]{escape(str(_key_path()))}[/bold] "
+            "(mode 0600)"
         )
         return 0
 
     if args.mode in BULK_MODES:
         if not args.output:
             raise PunciaError(f"{args.mode} mode requires an output directory")
+        # Per-query refinements have no place in a batch (each job runs with
+        # its mode's defaults); say so rather than let them vanish silently.
+        ignored = [
+            flag for flag, given in (
+                ("--match", args.match), ("--domain", args.domain), ("--filter", args.filters),
+                ("--offset", args.offset is not None), ("--format", args.output_format),
+            ) if given
+        ]
+        if ignored:
+            err_console.print(
+                f"[yellow]note:[/yellow] {', '.join(ignored)} do not apply to "
+                f"{args.mode} mode and are ignored"
+            )
         document = _load_json_document(args.query)
         if args.mode == "sbom":
             fingerprints = sbom_process(document)
@@ -1236,7 +1319,8 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
         return 1 if failures else 0
 
     spec = MODES[args.mode]
-    is_static = _is_static_query(args.mode, args.query)
+    query = args.query.strip()
+    is_static = _is_static_query(args.mode, query)
     filters = _parse_filters(args.filters)
     output_format = args.output_format or (
         "csv" if args.output and str(args.output).lower().endswith(".csv") else "json")
@@ -1291,7 +1375,7 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
     try:
         result = await query_api(
             args.mode,
-            args.query,
+            query,
             args.output,
             apikey=apikey,
             match=args.match,
@@ -1316,46 +1400,91 @@ async def run(argv: Optional[Sequence[str]] = None) -> int:
     else:
         emit_result(result)
     if args.output:
-        err_console.print(f"[bold green]✓[/bold green] written to [bold]{args.output}[/bold]")
+        err_console.print(
+            f"[bold green]✓[/bold green] written to [bold]{escape(str(args.output))}[/bold]"
+        )
     if crawl_hints:
         crawl_status = crawl_hints.get("X-Crawl-Status", "unknown")
         new_count = crawl_hints.get("X-Crawl-New-Count", "0")
         err_console.print(
-            f"[dim]crawl: {crawl_status}, {new_count} newly discovered name(s)[/dim]"
+            f"[dim]crawl: {escape(crawl_status)}, {escape(new_count)} newly discovered name(s)[/dim]"
         )
-        # Only the aggregate status, never anything identifying the crawl's
-        # upstreams: which sources back subdomain.center is confidential, and
-        # an older server that still sent per-source headers must not have
-        # them echoed here.
+        # Only the aggregate status and count are shown; no other crawl
+        # header is echoed.
         if crawl_status in ("partial", "running"):
             err_console.print(
                 "[dim]crawl: more results still coming — re-run with --crawl in a minute[/dim]"
             )
-    if _truthy_header(page_hints.get("X-Truncated")):
-        next_offset = page_hints.get("X-Next-Offset")
-        seen = page_hints.get("X-Result-Count")
-        if next_offset is None:
-            next_offset = (args.offset or 0) + int(seen) if seen is not None else "?"
-        # offset>0 requires limit= too (pagination is stateless server-side) -
-        # if the caller didn't pin one, the page's own X-Result-Count *is*
-        # the page size the server actually used, so resuming means repeating
-        # that same number, not omitting --limit entirely.
-        effective_limit = args.limit
-        if effective_limit is None and seen is not None:
-            effective_limit = seen
-        limit_hint = f" --limit {effective_limit}" if effective_limit is not None else ""
-        err_console.print(
-            f"[yellow]note:[/yellow] more results available — continue with "
-            f"--offset {next_offset}{limit_hint}"
-        )
+    if args.offset is not None and not is_static:
+        _print_continuation_hint(spec, args, result, page_hints)
     return 0
+
+
+def _print_continuation_hint(spec: Mode, args: argparse.Namespace, result: Any,
+                             page_hints: CIMultiDict) -> None:
+    """After a manual (``--offset``) page, tell the user how to fetch the next one.
+
+    Subdomain Center continuation is read from the response headers
+    (``X-Truncated``, ``X-Next-Offset``, ``X-Result-Count``); `nuclei
+    candidates` continuation from the body (``total``/``offset``/
+    ``candidates``). The two are never mixed.
+    """
+    if spec.pageable:
+        if not isinstance(result, dict) or not isinstance(result.get("candidates"), list):
+            return
+        try:
+            total = int(result.get("total") or 0)
+            page_offset = int(result.get("offset") or (args.offset or 0))
+        except (TypeError, ValueError):
+            return
+        next_offset = page_offset + len(result["candidates"])
+        if result["candidates"] and next_offset < total:
+            limit_hint = f" --limit {args.limit}" if args.limit is not None else ""
+            err_console.print(
+                f"[yellow]note:[/yellow] {next_offset} of {total} candidates seen — "
+                f"continue with --offset {next_offset}{limit_hint}"
+            )
+        return
+
+    if spec.host != SUBDOMAIN_HOST:
+        return
+    truncated = _truthy_header(page_hints.get("X-Truncated"))
+    seen = page_hints.get("X-Result-Count")
+    rows_in_body = len(result) if isinstance(result, list) else 0
+    try:
+        seen_rows = int(seen) if seen is not None else rows_in_body
+    except ValueError:
+        seen_rows = rows_in_body
+    # A (nearly) full page is treated as "more may follow" whatever the
+    # truncation header says (see PAGE_FULL_TOLERANCE).
+    looks_full = seen_rows > 0 and _page_looks_full(seen_rows, args.limit)
+    if not (truncated or looks_full):
+        return
+    next_offset: Any = page_hints.get("X-Next-Offset")
+    if next_offset is None:
+        # Step by the rows served, never by the page size: overlap, not a gap.
+        next_offset = (args.offset or 0) + seen_rows if seen_rows else "?"
+    # offset>0 requires limit= too; a page fetched without --limit used the
+    # default page size, so that is the size to repeat.
+    effective_limit = args.limit if args.limit is not None else SUBDOMAIN_DEFAULT_PAGE
+    what = (
+        "more results available"
+        if truncated
+        else "page came back full-sized, more results may exist"
+    )
+    err_console.print(
+        f"[yellow]note:[/yellow] {what} — continue with --offset {escape(str(next_offset))} "
+        f"--limit {effective_limit}"
+    )
 
 
 async def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         return await run(argv)
     except PunciaError as exc:
-        err_console.print(f"[bold red]error:[/bold red] {exc}")
+        # Error text may contain untrusted input; escape it so a
+        # `[`-containing value is printed, not parsed as rich markup.
+        err_console.print(f"[bold red]error:[/bold red] {escape(str(exc))}")
         return 1
     except KeyboardInterrupt:  # pragma: no cover - interactive
         err_console.print("[yellow]interrupted[/yellow]")

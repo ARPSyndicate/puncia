@@ -30,6 +30,16 @@ from puncia.__main__ import (  # noqa: E402
 import puncia.__main__ as puncia_main  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _isolated_key_store(tmp_path, monkeypatch):
+    """Never let a developer's real ~/.puncia or $PUNCIA_API_KEY leak into a
+    test: a CLI test that omits --api-key would otherwise silently switch to
+    the authenticated code paths on one machine and not another."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.delenv("PUNCIA_API_KEY", raising=False)
+
+
 # --------------------------------------------------------------------------- #
 # Output integrity — piped stdout must always be machine-readable
 # --------------------------------------------------------------------------- #
@@ -168,14 +178,23 @@ def test_scope_is_url_encoded():
 
 
 def test_scope_rejected_for_modes_that_do_not_support_it():
-    for mode in ("subdomain", "replica", "exploit", "enrich"):
+    for mode in ("subdomain", "replica", "exploit"):
         with pytest.raises(PunciaError, match="does not support --domain"):
             build_request(mode, "example.com", scope="other.com")
 
 
-def test_enrich_sets_enrich_flag():
-    url = build_request("enrich", "CVE-2021-44228")
-    assert "enrich=True" in url and "keyword=CVE-2021-44228" in url
+def test_enrich_mode_is_gone():
+    with pytest.raises(PunciaError, match="unknown mode 'enrich'"):
+        build_request("enrich", "CVE-2021-44228")
+    assert "enrich" not in puncia_main.ALL_MODES
+
+
+def test_old_bulk_files_with_enrich_degrade_to_a_warning(tmp_path):
+    jobs, warnings = plan_bulk(
+        {"exploit": ["CVE-2021-44228"], "enrich": ["CVE-2021-44228"]}, tmp_path.resolve()
+    )
+    assert [job[0] for job in jobs] == ["exploit"]
+    assert any("unknown mode 'enrich'" in warning for warning in warnings)
 
 
 def test_special_characters_are_url_encoded():
@@ -241,7 +260,7 @@ def test_limit_and_offset_are_added_to_subdomain_center_urls():
 
 
 def test_limit_offset_rejected_for_exploit_observer_modes():
-    for mode in ("exploit", "enrich", "noncve"):
+    for mode in ("exploit", "noncve"):
         query = "exploitable" if mode == "noncve" else "CVE-2021-3450"
         with pytest.raises(PunciaError, match="does not support pagination"):
             build_request(mode, query, limit=100)
@@ -250,10 +269,42 @@ def test_limit_offset_rejected_for_exploit_observer_modes():
 
 
 def test_negative_limit_and_offset_rejected():
-    with pytest.raises(PunciaError, match="--limit must be >= 0"):
+    with pytest.raises(PunciaError, match="--limit must be >= 1"):
         build_request("subdomain", "example.com", limit=-1)
     with pytest.raises(PunciaError, match="--offset must be >= 0"):
         build_request("subdomain", "example.com", offset=-1)
+
+
+def test_zero_limit_is_rejected_everywhere():
+    """limit=0 would make a walk judge every page full and never end on its own."""
+    with pytest.raises(PunciaError, match="--limit must be >= 1"):
+        build_request("subdomain", "example.com", limit=0)
+    with pytest.raises(PunciaError, match="between 1 and 1000"):
+        build_request("nuclei", "candidates", limit=0)
+
+
+def test_subdomain_center_limit_above_absolute_bound_is_rejected():
+    build_request("subdomain", "example.com", limit=puncia_main.SUBDOMAIN_MAX_PAGE)
+    with pytest.raises(PunciaError, match="must be <= 1000000"):
+        build_request("subdomain", "example.com", limit=puncia_main.SUBDOMAIN_MAX_PAGE + 1)
+
+
+def test_scope_rejected_for_path_based_modes_too():
+    """Regression: the --domain check used to sit after the /noncve branch
+    returned, so `puncia noncve exploitable --domain x` dropped it silently."""
+    with pytest.raises(PunciaError, match="does not support --domain"):
+        build_request("noncve", "exploitable", scope="example.com")
+    with pytest.raises(PunciaError, match="does not support --domain"):
+        build_request("nuclei", "candidates", scope="example.com")
+
+
+def test_inline_match_tolerates_whitespace():
+    url = build_request("keyword", "blog | prefix")
+    assert "keyword=blog" in url and "match=prefix" in url
+
+
+def test_static_pseudo_query_tolerates_surrounding_whitespace():
+    assert build_request("exploit", "  ^STATS ") == "https://api.exploit.observer/stats"
 
 
 def test_offset_zero_is_sent_explicitly_not_omitted():
@@ -293,7 +344,7 @@ def test_health_pseudo_query_not_recognized_under_replica_or_keyword():
 
 
 def test_query_api_skips_rate_limit_for_static_endpoints_without_a_key(monkeypatch):
-    """watchlist/health/stats are documented unlimited at both tiers."""
+    """Static pseudo-queries are never rate-limited by puncia."""
     seen_limiter = {}
 
     async def fake_fetch(session, url, headers, limiter, retries, timeout):
@@ -377,7 +428,7 @@ def test_crawl_is_only_sent_on_the_first_page_of_an_auto_paginated_walk(monkeypa
 
     result = asyncio.run(
         puncia_main._fetch_all_pages(
-            None, "subdomain", "example.com", "", "", None, {}, None, 0, 30.0,
+            None, "subdomain", "example.com", "", "", 2, {}, None, 0, 30.0,
             crawl=True,
         )
     )
@@ -398,7 +449,7 @@ def test_on_crawl_callback_receives_first_page_headers_only(monkeypatch):
 
     asyncio.run(
         puncia_main._fetch_all_pages(
-            None, "subdomain", "example.com", "", "", None, {}, None, 0, 30.0,
+            None, "subdomain", "example.com", "", "", 2, {}, None, 0, 30.0,
             crawl=True, on_crawl=lambda h: seen.append(h),
         )
     )
@@ -460,12 +511,27 @@ class _FakeGetSession:
     def __init__(self, responses):
         self.responses = list(responses)
         self.urls: list = []
+        self.timeouts: list = []
 
-    def get(self, url, headers=None):
+    def get(self, url, headers=None, timeout=None):
         self.urls.append(url)
+        self.timeouts.append(timeout)
         if not self.responses:
             raise AssertionError("more requests made than responses were queued")
         return self.responses.pop(0)
+
+
+def test_fetch_applies_the_timeout_per_request():
+    """`timeout=` must hold for a caller-supplied session too, not only for
+    the short-lived session query_api builds itself."""
+    import aiohttp
+
+    session = _FakeGetSession([_FakeResponse(200, json_data=[])])
+    asyncio.run(
+        puncia_main._fetch(session, "https://api.subdomain.center/?domain=x", {}, None, retries=0, timeout=7.5)
+    )
+    assert isinstance(session.timeouts[0], aiohttp.ClientTimeout)
+    assert session.timeouts[0].total == 7.5
 
 
 def test_fetch_honors_retry_after_header_on_429(monkeypatch):
@@ -525,12 +591,8 @@ def test_fetch_falls_back_to_default_backoff_when_no_retry_after(monkeypatch):
 
 
 def test_fetch_headers_are_looked_up_case_insensitively(monkeypatch):
-    """Regression: servers send lowercase headers over HTTP/2 (`x-truncated`,
-    not `X-Truncated`). `dict(response.headers)` silently discards
-    case-insensitivity and made every header check in this module return
-    None against a real server, even though it passed every test that used
-    hand-written title-case fake headers. `_fetch` must return something
-    that answers `.get("X-Truncated")` correctly for a lowercase source."""
+    """`_fetch` must return a mapping that answers `.get("X-Truncated")`
+    correctly for a lowercase header source; a plain dict would not."""
     session = _FakeGetSession(
         [_FakeResponse(200, json_data=["a.com"], headers={"x-truncated": "true", "x-next-offset": "5"})]
     )
@@ -543,9 +605,7 @@ def test_fetch_headers_are_looked_up_case_insensitively(monkeypatch):
 
 
 def test_pagination_continues_when_server_sends_lowercase_headers(monkeypatch):
-    """End-to-end version of the same regression, through the real page-walker
-    rather than a hand-written fake — this is what would have silently
-    truncated every authenticated result to one page against a real server."""
+    """End-to-end version of the same check, through the real page-walker."""
 
     class _LowercaseFetch:
         def __init__(self, pages):
@@ -601,8 +661,46 @@ def _offset_of(url: str) -> str:
     return ""
 
 
-def test_no_truncated_header_stops_after_one_page(monkeypatch):
-    """Today's live API omits X-Truncated on most endpoints; must not loop."""
+def test_no_truncated_header_short_page_stops_after_one_page(monkeypatch):
+    """Without X-Truncated, a page shorter than the explicit page size is the
+    last one; must not loop."""
+    fake = FakeFetch([(["a.example.com", "b.example.com"], {"X-Result-Count": "2"})])
+    monkeypatch.setattr(puncia_main, "_fetch", fake)
+
+    result = asyncio.run(
+        puncia_main._fetch_all_pages(
+            None, "subdomain", "example.com", "", "", 5, {}, None, 0, 30.0
+        )
+    )
+    assert result == ["a.example.com", "b.example.com"]
+    assert len(fake.urls) == 1, "a short page without a continue signal is the last page"
+
+
+def test_no_truncated_header_full_page_walks_until_short_page(monkeypatch):
+    """Without X-Truncated, a page as long as the requested page size means
+    more rows may exist, so the walk continues."""
+    fake = FakeFetch(
+        [
+            (["a.com", "b.com"], {"X-Result-Count": "2"}),
+            (["c.com", "d.com"], {"X-Result-Count": "2"}),
+            (["e.com"], {"X-Result-Count": "1"}),
+        ]
+    )
+    monkeypatch.setattr(puncia_main, "_fetch", fake)
+
+    result = asyncio.run(
+        puncia_main._fetch_all_pages(
+            None, "subdomain", "example.com", "", "", 2, {}, None, 0, 30.0
+        )
+    )
+    assert result == ["a.com", "b.com", "c.com", "d.com", "e.com"]
+    assert [_offset_of(u) for u in fake.urls] == ["0", "2", "4"]
+    assert all("limit=2" in u for u in fake.urls)
+
+
+def test_no_limit_sends_the_default_page_size_and_stops_on_a_short_page(monkeypatch):
+    """With no --limit the walk sends its default page size itself on page
+    one, so a small result is recognised as the last page at once."""
     fake = FakeFetch([(["a.example.com", "b.example.com"], {"X-Result-Count": "2"})])
     monkeypatch.setattr(puncia_main, "_fetch", fake)
 
@@ -612,10 +710,71 @@ def test_no_truncated_header_stops_after_one_page(monkeypatch):
         )
     )
     assert result == ["a.example.com", "b.example.com"]
-    assert len(fake.urls) == 1, "must not request a second page without a continue signal"
+    assert len(fake.urls) == 1, "a short page is the last page; no probe needed"
+    assert f"limit={puncia_main.SUBDOMAIN_DEFAULT_PAGE}" in fake.urls[0]
+    assert _offset_of(fake.urls[0]) == "0"
 
 
-def test_explicit_truncated_false_stops_after_one_page(monkeypatch):
+def test_no_limit_walk_repeats_the_default_page_size_on_every_page(monkeypatch):
+    """The page size is sent on every page, and it is the one page one used."""
+    fake = FakeFetch(
+        [
+            (["a.com"], {"X-Truncated": "true", "X-Next-Offset": "1"}),
+            (["b.com"], {"X-Truncated": "false"}),
+        ]
+    )
+    monkeypatch.setattr(puncia_main, "_fetch", fake)
+
+    result = asyncio.run(
+        puncia_main._fetch_all_pages(
+            None, "subdomain", "example.com", "", "", None, {}, None, 0, 30.0
+        )
+    )
+    assert result == ["a.com", "b.com"]
+    default = f"limit={puncia_main.SUBDOMAIN_DEFAULT_PAGE}"
+    assert all(default in url for url in fake.urls)
+
+
+def test_explicit_truncated_false_on_short_page_stops_after_one_page(monkeypatch):
+    fake = FakeFetch([(["a.com"], {"X-Result-Count": "1", "X-Truncated": "false"})])
+    monkeypatch.setattr(puncia_main, "_fetch", fake)
+
+    result = asyncio.run(
+        puncia_main._fetch_all_pages(
+            None, "subdomain", "example.com", "", "", 5, {}, None, 0, 30.0
+        )
+    )
+    assert result == ["a.com"]
+    assert len(fake.urls) == 1
+
+
+def test_truncated_false_on_nearly_full_page_is_not_trusted(monkeypatch):
+    """A nearly full page is walked past even under `X-Truncated: false`,
+    stepping by the rows served; the next window may re-serve the last row,
+    which client-side de-duplication absorbs."""
+    page_one = [f"h{i}.example.com" for i in range(199)]  # 200 asked, 199 served
+    # The next window starts at 199 and re-serves page one's last row.
+    page_two = [page_one[-1]] + [f"h{i}.example.com" for i in range(200, 350)]  # short: the end
+    fake = FakeFetch(
+        [
+            (page_one, {"X-Result-Count": "199", "X-Truncated": "false"}),
+            (page_two, {"X-Result-Count": "151", "X-Truncated": "false"}),
+        ]
+    )
+    monkeypatch.setattr(puncia_main, "_fetch", fake)
+
+    result = asyncio.run(
+        puncia_main._fetch_all_pages(
+            None, "keyword", "example", "", "", 200, {}, None, 0, 30.0
+        )
+    )
+    assert result == page_one + page_two[1:], "overlap must be collapsed, nothing lost"
+    assert [_offset_of(u) for u in fake.urls] == ["0", "199"]
+
+
+def test_explicit_truncated_false_on_short_page_without_limit_stops_at_once(monkeypatch):
+    """No --limit, explicit `false`, one row against a 200k default page: last
+    page, one request. Previously this cost a second (empty) request."""
     fake = FakeFetch([(["a.com"], {"X-Result-Count": "1", "X-Truncated": "false"})])
     monkeypatch.setattr(puncia_main, "_fetch", fake)
 
@@ -626,6 +785,24 @@ def test_explicit_truncated_false_stops_after_one_page(monkeypatch):
     )
     assert result == ["a.com"]
     assert len(fake.urls) == 1
+
+
+def test_overlapping_pages_are_deduplicated_in_order(monkeypatch):
+    """Consecutive windows may overlap; repeats are collapsed, order kept."""
+    fake = FakeFetch(
+        [
+            (["a.com", "b.com", "c.com"], {"X-Truncated": "true", "X-Next-Offset": "3"}),
+            (["c.com", "d.com"], {"X-Truncated": "false"}),
+        ]
+    )
+    monkeypatch.setattr(puncia_main, "_fetch", fake)
+
+    result = asyncio.run(
+        puncia_main._fetch_all_pages(
+            None, "subdomain", "example.com", "", "", None, {}, None, 0, 30.0
+        )
+    )
+    assert result == ["a.com", "b.com", "c.com", "d.com"]
 
 
 def test_truncated_true_with_next_offset_walks_to_next_page(monkeypatch):
@@ -680,7 +857,7 @@ def test_empty_page_stops_pagination_even_if_marked_truncated(monkeypatch):
 
 
 def test_non_advancing_offset_stops_instead_of_looping_forever(monkeypatch):
-    """A server bug that repeats the same X-Next-Offset must not spin."""
+    """A repeated X-Next-Offset must not spin."""
     fake = FakeFetch(
         [(["a.com"], {"X-Truncated": "true", "X-Next-Offset": "0"}) for _ in range(5)]
     )
@@ -816,7 +993,7 @@ def test_query_api_uses_single_page_when_offset_given(monkeypatch):
 
 
 def test_query_api_does_not_auto_paginate_without_a_key(monkeypatch):
-    """Anonymous requests ignore limit/offset server-side; don't walk pages."""
+    """Anonymous requests are never paginated by puncia."""
     called = {}
 
     async def fake_fetch_all_pages(*a, **k):
@@ -836,8 +1013,41 @@ def test_query_api_does_not_auto_paginate_without_a_key(monkeypatch):
     assert "auto_used" not in called
 
 
+def test_query_api_validates_every_argument_before_walking(monkeypatch):
+    """The page walkers rebuild URLs with only the arguments they use, so a
+    `match` handed to `nuclei` (or `crawl` to `replica`) used to be dropped
+    silently. It must be rejected like it is on the single-request path."""
+    async def fake_fetch(*a, **k):
+        raise AssertionError("must not reach the network with invalid arguments")
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    with pytest.raises(PunciaError, match="does not support --match"):
+        asyncio.run(query_api("nuclei", "candidates", apikey="ARPS-x", match="exact"))
+    with pytest.raises(PunciaError, match="does not support --crawl"):
+        asyncio.run(query_api("replica", "example.com", apikey="ARPS-x", crawl=True))
+
+
+def test_anonymous_query_api_calls_share_one_limiter_per_host(monkeypatch):
+    """Two back-to-back anonymous calls from one process share the per-IP
+    budget, so they must share a limiter rather than each bringing a fresh
+    one that lets both fire at once."""
+    seen = []
+
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        seen.append(limiter)
+        return ["a.com"], CIMultiDict()
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    asyncio.run(query_api("subdomain", "example.com"))
+    asyncio.run(query_api("replica", "example.com"))
+    asyncio.run(query_api("exploit", "CVE-2021-3450"))
+    assert seen[0] is seen[1] is puncia_main._DEFAULT_LIMITERS[puncia_main.SUBDOMAIN_HOST]
+    assert seen[2] is puncia_main._DEFAULT_LIMITERS[puncia_main.EXPLOIT_HOST]
+    assert seen[2] is not seen[0]
+
+
 def test_query_api_does_not_auto_paginate_exploit_observer_modes(monkeypatch):
-    """Only Subdomain Center modes paginate; exploit/enrich take a single hit."""
+    """Only Subdomain Center modes paginate; exploit takes a single hit."""
     called = {}
 
     async def fake_fetch_all_pages(*a, **k):
@@ -873,6 +1083,80 @@ def test_non_negative_int_rejects_negative():
         puncia_main._non_negative_int("-1")
 
 
+@pytest.mark.parametrize(
+    "flag, value",
+    [("--limit", "0"), ("--retries", "-1"), ("--concurrency", "0"), ("--timeout", "0"),
+     ("--timeout", "-3"), ("--timeout", "nan")],
+)
+def test_cli_rejects_unusable_numeric_flags(flag, value, capsys):
+    """A negative --retries meant zero attempts and a bare 'request failed';
+    --concurrency 0 a dead semaphore; --timeout 0 no timeout at all."""
+    with pytest.raises(SystemExit) as exc:
+        asyncio.run(puncia_main.main(["subdomain", "example.com", flag, value]))
+    assert exc.value.code == 2
+
+
+def test_cli_storekey_rejects_an_empty_key(tmp_path, capsys):
+    code = asyncio.run(puncia_main.main(["storekey", "   "]))
+    assert code == 1
+    assert "non-empty API key" in capsys.readouterr().err
+    assert not (tmp_path / ".puncia").exists()
+
+
+def test_cli_bulk_warns_about_flags_it_ignores(monkeypatch, tmp_path, capsys):
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        return ["a.example.com"], CIMultiDict({"X-Truncated": "false"})
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    targets = tmp_path / "targets.json"
+    targets.write_text(json.dumps({"subdomain": ["example.com"]}))
+    code = asyncio.run(puncia_main.main(
+        ["bulk", str(targets), str(tmp_path / "out"), "--match", "exact", "--offset", "0",
+         "--api-key", "ARPS-x", "--quiet"]
+    ))
+    assert code == 0
+    err = " ".join(capsys.readouterr().err.split())
+    assert "--match, --offset do not apply to bulk mode" in err
+    assert (tmp_path / "out" / "subdomain" / "example.com.json").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Rich markup — untrusted text must be printed, never parsed
+# --------------------------------------------------------------------------- #
+
+def test_bulk_failure_summary_survives_markup_in_a_query(monkeypatch, tmp_path, capsys):
+    """Regression: an SBOM component named `pkg[/]@1.0` that failed made rich
+    raise MarkupError while printing the failure line, aborting the whole run
+    with a traceback instead of a summary."""
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        raise PunciaError("HTTP 500: [bold]boom[/bold]")
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    failures = asyncio.run(puncia_main.process_bulk(
+        {"exploit": ["pkg[/]@1.0", "[link=https://evil]x[/link]@2"]}, tmp_path,
+        apikey="ARPS-x", show_progress=False,
+    ))
+    assert failures == 2
+    err = capsys.readouterr().err
+    assert "pkg[/]@1.0" in err and "[bold]boom[/bold]" in err
+
+
+def test_cli_error_text_with_markup_is_printed_verbatim(monkeypatch, capsys):
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        raise PunciaError("HTTP 400: invalid domain: '[/]x'")
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    code = asyncio.run(puncia_main.main(["subdomain", "[/]x", "--api-key", "ARPS-x", "--quiet"]))
+    assert code == 1
+    assert "invalid domain: '[/]x'" in capsys.readouterr().err
+
+
+def test_bulk_warnings_survive_markup_in_mode_names(tmp_path, capsys):
+    with pytest.raises(PunciaError, match="no valid queries"):
+        asyncio.run(puncia_main.process_bulk({"[/bold]": ["x"]}, tmp_path, show_progress=False))
+    assert "skipping unknown mode" in capsys.readouterr().err
+
+
 # --------------------------------------------------------------------------- #
 # SBOM parsing
 # --------------------------------------------------------------------------- #
@@ -906,6 +1190,20 @@ def test_sbom_tolerates_null_sections():
     assert sbom_process({"metadata": None, "components": None}) == []
 
 
+def test_sbom_that_is_not_an_object_yields_nothing_instead_of_crashing():
+    assert sbom_process(["not", "a", "bom"]) == []
+    assert sbom_process("bom") == []
+    assert sbom_process({"metadata": {"component": "x"}, "components": [{"name": "a", "version": "1"}]}) == ["a@1"]
+
+
+def test_cli_sbom_without_components_is_an_input_error(tmp_path, capsys):
+    bom = tmp_path / "bom.json"
+    bom.write_text("[]")
+    code = asyncio.run(puncia_main.main(["sbom", str(bom), str(tmp_path / "out")]))
+    assert code == 1
+    assert "expected a CycloneDX document" in capsys.readouterr().err
+
+
 # --------------------------------------------------------------------------- #
 # Bulk planning
 # --------------------------------------------------------------------------- #
@@ -927,6 +1225,74 @@ def test_plan_bulk_rejects_non_list_and_non_string(tmp_path):
     )
     assert [job[1] for job in jobs] == ["ok.com"]
     assert len(warnings) == 2
+
+
+def test_plan_bulk_scrubbed_names_never_share_a_file(tmp_path):
+    """`a/b@1` and `a:b@1` both scrub to `a_b@1`; without a disambiguator the
+    second result silently overwrote the first."""
+    jobs, warnings = plan_bulk({"exploit": ["a/b@1", "a:b@1", "a_b@1"]}, tmp_path.resolve())
+    destinations = [job[2] for job in jobs]
+    assert len(jobs) == 3 and len(set(destinations)) == 3
+    assert warnings == []
+    # The untouched name keeps its plain filename; only altered ones carry a hash.
+    assert (tmp_path.resolve() / "exploit" / "a_b@1.json") in destinations
+
+
+def test_plan_bulk_case_variants_get_distinct_files(tmp_path):
+    """macOS/Windows filesystems are case-insensitive; distinct queries must
+    not map onto one file there."""
+    jobs, _ = plan_bulk({"exploit": ["CVE-2021-1", "cve-2021-1"]}, tmp_path.resolve())
+    assert len(jobs) == 2
+    names = {str(job[2]).lower() for job in jobs}
+    assert len(names) == 2
+
+
+def test_plan_bulk_strips_whitespace_and_deduplicates_on_it(tmp_path):
+    jobs, _ = plan_bulk({"exploit": ["CVE-1", " CVE-1 "]}, tmp_path.resolve())
+    assert [job[1] for job in jobs] == ["CVE-1"]
+
+
+def test_windows_reserved_device_names_are_not_used_verbatim(tmp_path):
+    root = tmp_path.resolve()
+    for name in ("CON", "nul", "COM1", "Lpt9"):
+        destination = safe_output_path(root, "exploit", name)
+        assert destination is not None
+        assert destination.stem.lower() != name.lower()
+        assert destination.parent == root / "exploit"
+
+
+def test_process_bulk_with_no_valid_queries_is_an_error(tmp_path, capsys):
+    """Exit 0 with nothing written hid broken input files in CI."""
+    with pytest.raises(PunciaError, match="no valid queries"):
+        asyncio.run(puncia_main.process_bulk({"chat": ["hi"]}, tmp_path, show_progress=False))
+    assert not (tmp_path / "chat").exists()
+
+
+def test_write_failures_are_puncia_errors(tmp_path):
+    """So a bulk job that cannot write its file is recorded as that job's
+    failure instead of an OSError escaping asyncio.gather and killing the run."""
+    blocker = tmp_path / "dir.json"
+    blocker.mkdir()
+    with pytest.raises(PunciaError, match="cannot write"):
+        asyncio.run(puncia_main.write_json(blocker, {"a": 1}))
+    with pytest.raises(PunciaError, match="cannot write"):
+        asyncio.run(puncia_main.write_csv(blocker, {"candidates": []}))
+
+
+def test_process_bulk_records_a_write_failure_and_finishes(monkeypatch, tmp_path, capsys):
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        return {"description": "x"}, CIMultiDict()
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    root = tmp_path.resolve()
+    (root / "exploit").mkdir(parents=True)
+    (root / "exploit" / "CVE-1.json").mkdir()  # the destination is a directory
+    failures = asyncio.run(puncia_main.process_bulk(
+        {"exploit": ["CVE-1", "CVE-2"]}, root, apikey="ARPS-x", show_progress=False,
+    ))
+    assert failures == 1
+    assert (root / "exploit" / "CVE-2.json").is_file()
+    assert "cannot write" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------- #
@@ -1036,13 +1402,13 @@ def test_filters_rejected_for_modes_without_them():
 
 
 @pytest.mark.parametrize("limit", [0, 1001])
-def test_nuclei_limit_is_bounded_by_the_server_page_cap(limit):
+def test_nuclei_limit_is_bounded_by_the_page_cap(limit):
     with pytest.raises(PunciaError, match="between 1 and 1000"):
         build_request("nuclei", "candidates", limit=limit)
 
 
 def test_nuclei_offset_does_not_require_limit():
-    # unlike Subdomain Center, this endpoint's page size defaults server-side
+    # nuclei needs no --limit alongside --offset
     assert "offset=200" in build_request("nuclei", "candidates", offset=200)
 
 
@@ -1109,6 +1475,32 @@ def test_candidates_csv_has_one_row_per_cve_in_ranked_order():
     assert first["platform"] == ""
 
 
+def test_candidates_csv_carries_the_buildability_axes_and_ecosystem():
+    """`ecosystem` and every `shape` key land in their own CSV columns."""
+    import csv as csv_module
+    from puncia import candidates_to_csv
+
+    row = _candidate(
+        "CVE-2026-0001", ecosystem="npm",
+        shape={"protocol": "unknown", "method": "active", "authenticated": False,
+               "likely_http": True, "surface": "unknown", "state_change": "read", "xss_kind": None},
+    )
+    rows = list(csv_module.DictReader(candidates_to_csv({"candidates": [row]}).splitlines()))
+    first = rows[0]
+    assert first["ecosystem"] == "npm"
+    assert first["likely_http"] == "true" and first["state_change"] == "read"
+    assert first["surface"] == "unknown" and first["xss_kind"] == ""
+    assert first["protocol"] == "unknown" and first["method"] == "active"
+
+
+def test_candidates_csv_skips_non_object_rows():
+    from puncia import candidates_to_csv
+
+    text = candidates_to_csv({"candidates": ["garbage", None, _candidate("CVE-2026-0002")]})
+    assert text.count("\n") == 2 and "CVE-2026-0002" in text
+    assert candidates_to_csv({"candidates": "not-a-list"}).count("\n") == 1
+
+
 def test_candidates_csv_neutralises_spreadsheet_formulas():
     from puncia import candidates_to_csv
 
@@ -1159,6 +1551,85 @@ def test_cli_rejects_a_malformed_filter(capsys):
     code = asyncio.run(puncia_main.main(["nuclei", "candidates", "--filter", "kev"]))
     assert code == 1
     assert "KEY=VALUE" in capsys.readouterr().err
+
+
+def test_cli_manual_page_warns_when_full_sized_despite_truncated_false(monkeypatch, capsys):
+    """A --limit 200 manual page that returns 199 rows + `X-Truncated: false`
+    is treated as possibly incomplete, and the hint steps by the 199 rows
+    served (the next page may overlap by a row; it can never skip one)."""
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        rows = [f"h{i}.example.com" for i in range(199)]
+        return rows, CIMultiDict({"X-Result-Count": "199", "X-Truncated": "false"})
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    code = asyncio.run(puncia_main.main(
+        ["keyword", "example", "--offset", "0", "--limit", "200", "--api-key", "ARPS-x", "--quiet"]
+    ))
+    assert code == 0
+    err = " ".join(capsys.readouterr().err.split())  # rich wraps at console width
+    assert "full-sized" in err
+    assert "--offset 199 --limit 200" in err
+
+
+def test_cli_manual_page_without_limit_hints_the_default_page_size(monkeypatch, capsys):
+    """`--offset 0` with no --limit: the hint repeats puncia's default page
+    size, since offset>0 requires limit."""
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        return ["a.example.com"], CIMultiDict(
+            {"X-Result-Count": "1", "X-Truncated": "true", "X-Next-Offset": "1"}
+        )
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    code = asyncio.run(puncia_main.main(
+        ["subdomain", "example.com", "--offset", "0", "--api-key", "ARPS-x", "--quiet"]
+    ))
+    assert code == 0
+    err = " ".join(capsys.readouterr().err.split())
+    assert f"--offset 1 --limit {puncia_main.SUBDOMAIN_DEFAULT_PAGE}" in err
+
+
+def test_cli_nuclei_manual_page_hint_comes_from_the_body_not_subdomain_headers(monkeypatch, capsys):
+    """The nuclei hint comes from the body's offset/candidates/total, never
+    from an `X-Result-Count` header."""
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        body = {"generated": "g", "total": 2500, "offset": 0, "limit": 2,
+                "candidates": [_candidate("CVE-2026-0001"), _candidate("CVE-2026-0002")]}
+        return body, CIMultiDict({"X-Result-Count": "2500"})
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    code = asyncio.run(puncia_main.main(
+        ["nuclei", "candidates", "--offset", "0", "--limit", "2", "--api-key", "ARPS-x", "--quiet"]
+    ))
+    assert code == 0
+    err = " ".join(capsys.readouterr().err.split())
+    assert "2 of 2500 candidates seen" in err
+    assert "--offset 2 --limit 2" in err
+    assert "--offset 2500" not in err
+
+
+def test_cli_nuclei_last_manual_page_prints_no_hint(monkeypatch, capsys):
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        body = {"total": 3, "offset": 2, "limit": 2, "candidates": [_candidate("CVE-2026-0003")]}
+        return body, CIMultiDict({"X-Result-Count": "3"})
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    code = asyncio.run(puncia_main.main(
+        ["nuclei", "candidates", "--offset", "2", "--limit", "2", "--api-key", "ARPS-x", "--quiet"]
+    ))
+    assert code == 0
+    assert "continue with" not in capsys.readouterr().err
+
+
+def test_cli_manual_page_stays_quiet_on_a_clearly_short_last_page(monkeypatch, capsys):
+    async def fake_fetch(session, url, headers, limiter, retries, timeout):
+        return ["a.example.com"], CIMultiDict({"X-Result-Count": "1", "X-Truncated": "false"})
+
+    monkeypatch.setattr(puncia_main, "_fetch", fake_fetch)
+    code = asyncio.run(puncia_main.main(
+        ["keyword", "example", "--offset", "0", "--limit", "200", "--api-key", "ARPS-x", "--quiet"]
+    ))
+    assert code == 0
+    assert "continue with" not in capsys.readouterr().err
 
 
 def test_cli_never_echoes_crawl_source_names(monkeypatch, capsys):
